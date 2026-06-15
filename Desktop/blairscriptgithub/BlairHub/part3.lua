@@ -1,4 +1,5 @@
 -- BlairHub split chunk
+local Lighting = game:GetService("Lighting")
 local S = (...) or {}
 local Players = S.Players
 local RunService = S.RunService
