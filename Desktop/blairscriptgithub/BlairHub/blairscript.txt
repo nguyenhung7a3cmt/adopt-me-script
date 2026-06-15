@@ -1,0 +1,4514 @@
+_G.BlairHub = false
+task.wait(1.5)
+_G.BlairHub = true
+
+pcall(function()
+    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    local old = pg:FindFirstChild("BlairHubUI")
+    if old then old:Destroy() end
+end)
+
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local Lighting     = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local UIS          = game:GetService("UserInputService")
+local RS           = game:GetService("ReplicatedStorage")
+local lp           = Players.LocalPlayer
+
+local C = {
+    BG=Color3.fromRGB(8,8,14),       BG2=Color3.fromRGB(14,9,24),
+    Card=Color3.fromRGB(16,12,26),   CardAlt=Color3.fromRGB(12,9,20),
+    Stroke=Color3.fromRGB(70,35,130),StrokeDim=Color3.fromRGB(48,24,90),
+    Accent=Color3.fromRGB(130,60,220),AccentDim=Color3.fromRGB(60,30,110),
+    Text=Color3.fromRGB(220,210,235),TextDim=Color3.fromRGB(130,120,155),
+    TextMuted=Color3.fromRGB(75,70,100),Green=Color3.fromRGB(55,220,100),
+    Red=Color3.fromRGB(220,50,50),   Purple=Color3.fromRGB(195,145,255),
+    HeaderText=Color3.fromRGB(90,55,150),SectionLine=Color3.fromRGB(38,20,72),
+    HuntRed=Color3.fromRGB(215,48,30),HuntDark=Color3.fromRGB(120,18,18),
+    FarmGreen=Color3.fromRGB(25,110,25),FarmRed=Color3.fromRGB(130,25,25),
+    GhostHunt=Color3.fromRGB(255,30,30),GhostNormal=Color3.fromRGB(200,80,255),
+    ItemGreen=Color3.fromRGB(60,220,100),ColdBlue=Color3.fromRGB(100,210,255),
+    FlyBlue=Color3.fromRGB(80,200,255),FlyPurple=Color3.fromRGB(180,100,255),
+    Yellow=Color3.fromRGB(255,220,60),Orange=Color3.fromRGB(255,200,80),
+    ColdLight=Color3.fromRGB(160,200,240),
+}
+
+local EV_MAP = {
+    ["EMF Level 5"]="EMF5",["Freezing Temperatures"]="FREEZE",
+    ["Ghost Orb"]="ORB",["Ghost Writing"]="WRITING",
+    ["Spirit Box"]="SBOX",["SLS Anomaly"]="SLS",["Ultraviolet"]="UV",
+}
+local EVIDENCE_INFO = {
+    {key="EMF5",    label="EMF Level 5",          icon="E"},
+    {key="FREEZE",  label="Freezing Temperatures", icon="F"},
+    {key="ORB",     label="Ghost Orb",             icon="O"},
+    {key="WRITING", label="Ghost Writing",         icon="W"},
+    {key="SBOX",    label="Spirit Box",            icon="S"},
+    {key="SLS",     label="SLS Anomaly",           icon="L"},
+    {key="UV",      label="Ultraviolet",           icon="U"},
+}
+local GHOST_DB = {}
+
+local Config = {
+    FullBright=false,GhostESP=false,ItemESP=false,HuntAlert=false,
+    SpeedHack=false,SpeedValue=24,
+    AutoHide=false,AutoFarm=false,FlyMode=false,GhostMode=false,
+}
+local KEYBINDS = {
+    Fly = Enum.KeyCode.F,
+    Ghost = Enum.KeyCode.G,
+    Trait = Enum.KeyCode.T,
+}
+local detectedEvidence  = {}
+local evidenceRefs      = {}
+local ghostCells        = {}
+local ghostCountLbl     = nil
+local ghostRoomLbl      = nil
+local farmStatusLbl     = nil
+local farmBtn           = nil
+local detectionConns    = {}
+local AUTO_FARM         = {running=false}
+local evidenceMissCount = {}
+local MISS_SKIP         = 3
+local sboxToken         = {}
+
+local evidenceConfirmedAbsent={}
+local function recordMiss(k) evidenceMissCount[k]=(evidenceMissCount[k] or 0)+1 end
+local function resetMissCounts() evidenceMissCount={}; evidenceConfirmedAbsent={} end
+local function markAbsent(k) evidenceConfirmedAbsent[k]=true end
+local function shouldSkip(k)
+    if detectedEvidence[k] then return true end
+    if (evidenceMissCount[k] or 0)>=MISS_SKIP then return true end
+    local possible={}
+    for name,evidences in pairs(GHOST_DB) do
+        local eliminated=false
+        for ev,det in pairs(detectedEvidence) do
+            if det then
+                local has=false
+                for _,ge in ipairs(evidences) do if ge==ev then has=true; break end end
+                if not has then eliminated=true; break end
+            end
+        end
+        if not eliminated then table.insert(possible,name) end
+    end
+    if #possible<=1 then return false end
+    local hasIt,notHasIt=false,false
+    for _,gname in ipairs(possible) do
+        local evList=GHOST_DB[gname] or {}
+        local has=false
+        for _,ge in ipairs(evList) do if ge==k then has=true; break end end
+        if has then hasIt=true else notHasIt=true end
+    end
+    if hasIt and notHasIt then return false end
+    return true
+end
+
+local function getMap()   return workspace:FindFirstChild("Map") end
+local function getItems() local m=getMap(); return m and m:FindFirstChild("Items") end
+local function getZones() local m=getMap(); return m and m:FindFirstChild("Zones") end
+local function getChar()  return lp.Character end
+local function getBP()    return lp:FindFirstChild("Backpack") end
+
+local function getAllESPItemRoots()
+    local roots = {}
+    local map = getMap()
+
+    if map then
+        local items = map:FindFirstChild("Items")
+        if items then
+            table.insert(roots, {
+                root = items,
+                deep = false,
+            })
+        end
+
+        local cursedSpawns = map:FindFirstChild("CursedSpawns")
+        if cursedSpawns then
+            table.insert(roots, {
+                root = cursedSpawns,
+                deep = false,
+            })
+        end
+    end
+
+    -- Scan workspace top-level cho cursed objects (BooBooDoll, Spirit Board, v.v.)
+    table.insert(roots, {
+        root = workspace,
+        deep = false,
+        workspaceOnly = true, -- chỉ lấy direct children
+    })
+
+    return roots
+end
+
+local function getRemote(path)
+    local node=RS:FindFirstChild("Remotes")
+    if not node then return nil end
+    for part in path:gmatch("[^%.]+") do
+        node=node:FindFirstChild(part)
+        if not node then return nil end
+    end
+    return node
+end
+
+local function loadGhostDB()
+    if next(GHOST_DB) then return true end
+    local done,result=false,nil
+    task.spawn(function()
+        local ok,res=pcall(function()
+            return RS.Remotes.GetGhostInformation.GetGhostEvidences:InvokeServer()
+        end)
+        result=ok and res or nil; done=true
+    end)
+    local t=0
+    while not done and t<6 do task.wait(0.1); t=t+0.1 end
+    if type(result)~="table" or not next(result) then return false end
+    local count=0
+    for ghostName,evList in pairs(result) do
+        GHOST_DB[ghostName]={}
+        for _,evName in ipairs(evList) do
+            local key=EV_MAP[evName]
+            if key then table.insert(GHOST_DB[ghostName],key) end
+        end
+        count=count+1
+    end
+    print("[Blair v7.8] Ghost DB:",count,"ghosts")
+    return count>0
+end
+
+local playerNamesCache = {}
+local function refreshPlayerNames()
+    playerNamesCache = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        playerNamesCache[p.Name] = true
+    end
+end
+Players.PlayerAdded:Connect(function(p)
+    playerNamesCache[p.Name] = true
+end)
+Players.PlayerRemoving:Connect(function(p)
+    playerNamesCache[p.Name] = nil
+end)
+
+local function findGhost()
+    for _,v in ipairs(workspace:GetChildren()) do
+        if v:IsA("Model") and not playerNamesCache[v.Name]
+        and v.Name~="CloneGhost" and v.Name~="IntroVan"
+        and v:FindFirstChild("Hunting") then
+            return v
+        end
+    end
+    return nil
+end
+
+local function isHunting()
+    local g=findGhost()
+    local hv=g and g:FindFirstChild("Hunting")
+    local result = hv and hv.Value==true
+    if result then
+        print("[DEBUG isHunting] TRUE - ghost model:", g and g.Name, "Hunting value:", hv and hv.Value)
+    end
+    return result
+end
+
+local tweenToPos -- forward declaration
+
+local function moveToPos(dest,label)
+    if not dest then return false end
+    return tweenToPos(dest, label, 50)
+end
+
+local function tweenTo(pos,yOff)
+    if not pos then return end
+    moveToPos(Vector3.new(pos.X,pos.Y+(yOff or 0),pos.Z),"tweenTo")
+end
+
+local function getOutsidePos()
+    local Map=getMap()
+    local van=Map and Map:FindFirstChild("Van")
+    local vanMdl=van and van:FindFirstChild("Van")
+    if vanMdl then
+        local p=vanMdl:FindFirstChildWhichIsA("BasePart")
+        if p then return p.Position+Vector3.new(0,0,14) end
+    end
+    return Vector3.new(0,5,0)
+end
+
+-- ============================================================================
+-- [v7.9 FIX] Van Door — dùng OpenVan BindableEvent (confirmed từ scan)
+-- Bindables: OpenVan, VanOpened, VanClosed
+local vanDoorOpened = false
+local function openVanDoor()
+    if vanDoorOpened then return true end
+
+    -- Method 1: Fire OpenVan BindableEvent (direct, no position needed, không cần vanMdl)
+    local openedViaBindable=false
+    pcall(function()
+        local bind=RS:FindFirstChild("Bindables")
+        local openVan=bind and bind:FindFirstChild("OpenVan")
+        if openVan then
+            openVan:Fire()
+            task.wait(0.8)
+            openedViaBindable=true
+            print("[VanDoor] Opened via OpenVan bindable")
+        end
+    end)
+
+    if openedViaBindable then
+        vanDoorOpened=true
+        return true
+    end
+
+    -- Method 2: Fallback ProximityPrompt scan (cần vanMdl)
+    local Map=getMap()
+    local van=Map and Map:FindFirstChild("Van")
+    local vanMdl=van and van:FindFirstChild("Van")
+    if not vanMdl then
+        print("[VanDoor] OpenVan bindable failed + vanMdl not found")
+        return false
+    end
+
+    local bestPrompt=nil
+    local bestPart=nil
+    for _,desc in ipairs(vanMdl:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") then
+            local action=(desc.ActionText or ""):lower()
+            local pname=(desc.Parent and desc.Parent.Name or ""):lower()
+            if action:find("door") or action:find("open") or pname:find("door") or pname:find("van") then
+                bestPrompt=desc; bestPart=desc.Parent; break
+            end
+        end
+    end
+    if not bestPrompt then
+        for _,desc in ipairs(vanMdl:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") then
+                bestPrompt=desc; bestPart=desc.Parent; break
+            end
+        end
+    end
+    if not bestPrompt then
+        print("[VanDoor] No prompt found — continuing anyway")
+        vanDoorOpened=true
+        return true
+    end
+    if bestPart and bestPart:IsA("BasePart") then
+        moveToPos(bestPart.Position+Vector3.new(0,0,2),"van door")
+        task.wait(0.4)
+    end
+    pcall(function()
+        bestPrompt.MaxActivationDistance=32
+        if fireproximityprompt then fireproximityprompt(bestPrompt) end
+    end)
+    task.wait(1.2)
+    vanDoorOpened=true
+    print("[VanDoor] Opened via prompt")
+    return true
+end
+
+-- [v8.3] Lay tam phong (trung binh BaseParts) + raycast tim san trong khong gian phong
+-- Tra ve diem dung an toan trong khong khi phong, khong cham vao tuong/do vat
+local function getSortedRooms()
+    local rooms = {}
+    local Zones = getZones()
+    if not Zones then return rooms end
+    for _, zone in ipairs(Zones:GetChildren()) do
+        local tv = zone:FindFirstChild("_____Temperature")
+        local excl = zone:FindFirstChild("Exclude")
+        if tv and tv:IsA("NumberValue") and not (excl and excl.Value) then
+            local sumPos = Vector3.zero
+            local count = 0
+            local maxY = -math.huge
+            for _, v in ipairs(zone:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    sumPos = sumPos + v.Position
+                    count = count + 1
+                    if v.Position.Y > maxY then maxY = v.Position.Y end
+                end
+            end
+            if count > 0 then
+                local center = sumPos / count
+                -- Không raycast — dùng center + 3 studs, character tự rơi xuống sàn
+                local safe = Vector3.new(center.X, center.Y + 3, center.Z)
+                table.insert(rooms, {name=zone.Name, temp=tv.Value, pos=safe, center=center})
+            end
+        end
+    end
+    table.sort(rooms, function(a,b) return a.temp < b.temp end)
+    return rooms
+end
+
+tweenToPos = function(dest, label, speed)
+    if not dest then return false end
+    local char = getChar()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return false end
+    local dist = (hrp.Position - dest).Magnitude
+    if dist < 3 then return true end
+
+    -- [v8.3] TP 1 phat + raycast tim san. Ignore character + Van model.
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    local _excludeList = {char}
+    pcall(function()
+        local _map = getMap()
+        local _van = _map and _map:FindFirstChild("Van")
+        if _van then table.insert(_excludeList, _van) end
+    end)
+    rp.FilterDescendantsInstances = _excludeList
+    rp.IgnoreWater = true
+
+    print(string.format("[Move] %s (%.0fu) -> teleport", label or "pos", dist))
+
+    for _, v in ipairs(hrp:GetChildren()) do
+        if v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then
+            v:Destroy()
+        end
+    end
+
+    -- TP vào khoảng không giữa phòng (dest + 3 studs cao), không raycast
+    -- Character tự rơi xuống sàn → server không reject
+    local landing = dest + Vector3.new(0, 3, 0)
+    hrp.CFrame = CFrame.new(landing)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    -- Chờ character rơi xuống sàn tự nhiên (tối đa 1.5s)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:ChangeState(Enum.HumanoidStateType.Freefall)
+    end
+    task.wait(0.8)
+
+    local charF = getChar()
+    local hrpF = charF and charF:FindFirstChild("HumanoidRootPart")
+    return hrpF and (hrpF.Position - landing).Magnitude < 20 or false
+end
+
+-- ============================================================================
+-- [smartTP] Adaptive TP với raycast grid sampling + anticheat gaussian
+-- ============================================================================
+local lastTPTime = 0
+
+local function gaussian(mean, stddev)
+    local u = math.max(math.random(), 1e-10)
+    local v = math.random()
+    return mean + stddev * math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * v)
+end
+
+local function smartTP(dest, label)
+    if not dest then return false end
+
+    -- Anticheat cooldown
+    local now = tick()
+    local cooldown = gaussian(10, 2)
+    if now - lastTPTime < cooldown then
+        local wait = cooldown - (now - lastTPTime)
+        print(string.format("[smartTP] Cooldown %.1fs", wait))
+        task.wait(wait)
+    end
+
+    local char = getChar()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return false end
+
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances = {char}
+    rp.IgnoreWater = true
+
+    -- Bước 1: Detect phòng tại dest
+    local dirs = {
+        Vector3.new(1,0,0), Vector3.new(-1,0,0),
+        Vector3.new(0,0,1), Vector3.new(0,0,-1),
+    }
+    local minWall = math.huge
+    for _, d in ipairs(dirs) do
+        local hit = workspace:Raycast(dest, d * 20, rp)
+        local dist = hit and hit.Distance or 20
+        if dist < minWall then minWall = dist end
+    end
+    local safe_radius = math.max(minWall - 1, 1)
+
+    local hitUp = workspace:Raycast(dest, Vector3.new(0, 1, 0) * 20, rp)
+    local room_height = hitUp and hitUp.Distance or 10
+
+    -- Bước 2: Landing offset Y
+    local landingOffsetY = math.clamp(room_height - 2, 1.5, 3)
+
+    -- Bước 3: Grid sampling
+    local grid_step
+    if safe_radius < 3 then grid_step = 0.5
+    elseif safe_radius <= 6 then grid_step = 1.0
+    else grid_step = 2.0 end
+
+    local bestPoint = nil
+    local bestScore = -math.huge
+
+    local x = -safe_radius
+    while x <= safe_radius do
+        local z = -safe_radius
+        while z <= safe_radius do
+            local candidate = dest + Vector3.new(x, landingOffsetY + 5, z)
+            local hitDown = workspace:Raycast(candidate, Vector3.new(0, -10, 0), rp)
+            if hitDown then
+                local normal = hitDown.Normal
+                if normal.Y > 0.85 then
+                    local landPos = hitDown.Position + Vector3.new(0, landingOffsetY, 0)
+                    local distToTarget = (landPos - dest).Magnitude
+                    local distToWall = math.min(safe_radius, minWall - math.sqrt(x*x + z*z))
+                    local score = -distToTarget * 2 + distToWall
+
+                    -- Gaussian offset nhỏ để tránh anticheat
+                    local offsetX = gaussian(0, 1.5)
+                    local offsetZ = gaussian(0, 1.5)
+                    local jittered = landPos + Vector3.new(offsetX, 0, offsetZ)
+
+                    if score > bestScore then
+                        bestScore = score
+                        bestPoint = jittered
+                    end
+                end
+            end
+            z = z + grid_step
+        end
+        x = x + grid_step
+    end
+
+    if not bestPoint then
+        -- Fallback về tweenToPos cũ
+        print("[smartTP] Không tìm được điểm an toàn, fallback")
+        return tweenToPos(dest, label, 50)
+    end
+
+    -- Verify: 3 ray song song thay spherecast
+    local blocked = false
+    local offsets = {Vector3.new(0,0,0), Vector3.new(0.5,0,0), Vector3.new(-0.5,0,0)}
+    for _, off in ipairs(offsets) do
+        local from = hrp.Position + off
+        local dir = (bestPoint - from)
+        local verify = workspace:Raycast(from, dir, rp)
+        if verify and verify.Distance < dir.Magnitude - 1 then
+            blocked = true; break
+        end
+    end
+    if blocked then
+        print("[smartTP] Đường đi bị chặn, fallback")
+        return tweenToPos(dest, label, 50)
+    end
+
+    -- TP
+    print(string.format("[smartTP] %s → score=%.1f dist=%.0fu", label or "pos", bestScore, (hrp.Position - bestPoint).Magnitude))
+    hrp.CFrame = CFrame.new(bestPoint)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    if hum then hum:ChangeState(Enum.HumanoidStateType.Freefall) end
+
+    -- Gaussian timing
+    task.wait(gaussian(0.15, 0.03))
+    lastTPTime = tick()
+
+    local hrpF = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+    return hrpF ~= nil
+end
+
+local function goToGhostRoom()
+    -- [v8.3] Luon tele den diem an toan giua phong (khong cham tuong/do vat -> tranh anti-cheat keo ve Van)
+    local rooms = getSortedRooms()
+    if #rooms == 0 then
+        print("[GoGhostRoom] Khong tim duoc phong nao!")
+        return false, nil
+    end
+
+    -- Neu tim duoc ghost, uu tien phong chua ghost (theo khoang cach toi center)
+    local ghost = findGhost()
+    local target = rooms[1]
+    if ghost then
+        local a = ghost:FindFirstChild("HumanoidRootPart") or ghost:FindFirstChildWhichIsA("BasePart")
+        if a then
+            local best, bestDist = nil, math.huge
+            for _, r in ipairs(rooms) do
+                local c = r.center or r.pos
+                local d = (c - a.Position).Magnitude
+                if d < bestDist then bestDist = d; best = r end
+            end
+            if best then target = best end
+        end
+    end
+
+    print(string.format("[GoGhostRoom] -> %s (%.1f C)", target.name, target.temp))
+    smartTP(target.pos, target.name)
+    return true, target.pos
+end
+
+-- ============================================================================
+-- [v7.8] Inventory — 3 slot mặc định, dùng Slot1-5 ObjectValue để track
+-- ============================================================================
+local invRemote=nil
+local function getInvRemote()
+    if invRemote and invRemote.Parent then return invRemote end
+    invRemote=getRemote("InventoryRemotes.Action")
+    return invRemote
+end
+
+-- Đếm số tool đang có (BP + char)
+local function getBPToolCount()
+    local bp=getBP()
+    if not bp then return 0 end
+    local c=0
+    for _,v in ipairs(bp:GetChildren()) do if v:IsA("Tool") then c=c+1 end end
+    return c
+end
+
+local function getCharToolCount()
+    local char=getChar()
+    if not char then return 0 end
+    local c=0
+    for _,v in ipairs(char:GetChildren()) do if v:IsA("Tool") then c=c+1 end end
+    return c
+end
+
+local function getTotalToolCount()
+    return getBPToolCount() + getCharToolCount()
+end
+
+local function dropCurrentTool()
+    local char=getChar()
+    local hasEquipped=false
+    if char then
+        for _,v in ipairs(char:GetChildren()) do
+            if v:IsA("Tool") then hasEquipped=true; break end
+        end
+    end
+    if not hasEquipped then
+        local r0=getInvRemote()
+        if r0 then pcall(function() r0:FireServer("Slot",1) end) end
+        task.wait(0.4)
+    end
+    local r=getInvRemote()
+    if r then pcall(function() r:FireServer("Drop") end) end
+    task.wait(0.35)
+end
+
+-- Drop equipped tool (tool trong char)
+local function dropEquipped()
+    local char=getChar()
+    if not char then return end
+    for _,v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") then
+            dropCurrentTool()
+            task.wait(0.2)
+            return
+        end
+    end
+end
+
+local function getSlotIndex(name)
+    local bp=getBP()
+    if not bp then return nil end
+    local nameLow=name:lower()
+    local children=bp:GetChildren()
+    for i,v in ipairs(children) do
+        if v:IsA("Tool") and v.Name:lower():find(nameLow,1,true) then
+            return i,v
+        end
+    end
+    return nil,nil
+end
+
+local function findInInventory(name)
+    local nameLow=name:lower()
+    local char,bp=getChar(),getBP()
+    for _,parent in ipairs({char,bp}) do
+        if parent then
+            for _,v in ipairs(parent:GetChildren()) do
+                if v:IsA("Tool") and v.Name:lower():find(nameLow,1,true) then
+                    return v,parent
+                end
+            end
+        end
+    end
+    return nil,nil
+end
+
+local function hasInInventory(name) return findInInventory(name)~=nil end
+
+local function getEquipped(name)
+    local char=getChar()
+    if not char then return nil end
+    local nameLow=name:lower()
+    for _,v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") and v.Name:lower():find(nameLow,1,true) then return v end
+    end
+    return nil
+end
+
+local function equipTool(name)
+    if getEquipped(name) then return true end
+    local r=getInvRemote()
+    for attempt=1,4 do
+        local idx,tool=getSlotIndex(name)
+        if idx then
+            if r then pcall(function() r:FireServer("Slot",idx) end) end
+            task.wait(0.4)
+            if getEquipped(name) then return true end
+        else
+            task.wait(0.3)
+        end
+    end
+    return getEquipped(name)~=nil
+end
+
+local function pickupFromFloor(toolObj)
+    if not toolObj or not toolObj.Parent then return false end
+    local prompt = nil
+    local handle = toolObj:FindFirstChild("Handle")
+    if handle then prompt = handle:FindFirstChild("NewPickupPrompt") end
+    if not prompt then
+        for _, d in ipairs(toolObj:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then prompt = d; break end
+        end
+    end
+    if not prompt then return false end
+    local anchor = handle or toolObj:FindFirstChildWhichIsA("BasePart")
+    if anchor then
+        -- TP truc tiep den ngang Handle, KHONG raycast (tranh dap len noc Van)
+        local char = getChar()
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local dst = anchor.Position + Vector3.new(0, 3, 1)
+            hrp.CFrame = CFrame.new(dst) * (hrp.CFrame - hrp.CFrame.Position)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            task.wait(0.15)
+        end
+    end
+    local confirmed = false
+    local listenConn = nil
+    local toolCreated = getRemote("ToolCreated")
+    if toolCreated then
+        listenConn = toolCreated.OnClientEvent:Connect(function(n)
+            if tostring(n) == toolObj.Name then confirmed = true end
+        end)
+    end
+    pcall(function()
+        pcall(function() prompt.MaxActivationDistance = 32 end)
+        if fireproximityprompt then fireproximityprompt(prompt) end
+    end)
+    local deadline = tick() + 2.5
+    while tick() < deadline and not confirmed do task.wait(0.05) end
+    if listenConn then pcall(function() listenConn:Disconnect() end) end
+    return confirmed or hasInInventory(toolObj.Name)
+end
+
+-- [v7.8 FIX] bringTool — kiểm tra slot trước khi pick
+-- 3 slot mặc định: nếu đã đủ 3, drop 1 trước khi pick
+local function bringTool(name)
+    if hasInInventory(name) then return true end
+
+    -- Kiểm tra slot còn trống không (max 3)
+    local total=getTotalToolCount()
+    if total>=3 then
+        -- Drop tool đang cầm (equipped) trước
+        dropEquipped()
+        task.wait(0.3)
+        -- Nếu vẫn còn 3, drop tool trong BP
+        if getTotalToolCount()>=3 then
+            dropCurrentTool()
+            task.wait(0.3)
+        end
+    end
+
+    local Items=getItems()
+    if not Items then return false end
+    local nameLow=name:lower()
+    local toolObj=nil
+    for _,v in ipairs(Items:GetChildren()) do
+        if v.Name:lower():find(nameLow,1,true) then toolObj=v; break end
+    end
+    if not toolObj then return false end
+
+    local confirmed=false
+    local listenConn=nil
+    local toolCreated=getRemote("ToolCreated")
+    if toolCreated then
+        listenConn=toolCreated.OnClientEvent:Connect(function(n)
+            if tostring(n):lower():find(nameLow,1,true) then confirmed=true end
+        end)
+    end
+    local ok=pickupFromFloor(toolObj)
+    if not confirmed then
+        local t=0
+        while not confirmed and t<3 do task.wait(0.1); t=t+0.1 end
+    end
+    if listenConn then pcall(function() listenConn:Disconnect() end) end
+    local result=confirmed or ok or hasInInventory(name)
+    if result then print("[Inv] Picked up:",name) end
+    return result
+end
+
+local function returnTool(name)
+    local eq=getEquipped(name)
+    if not eq then return end
+    local bp=getBP()
+    if bp then
+        pcall(function() eq.Parent=bp end)
+        task.wait(0.2)
+        if getEquipped(name) then dropCurrentTool() end
+    else
+        dropCurrentTool()
+    end
+end
+
+local function setFarmStatus(text,col)
+    if farmStatusLbl then
+        farmStatusLbl.Text=text
+        farmStatusLbl.TextColor3=col or C.FlyBlue
+    end
+    print("[Farm]",text)
+end
+
+local function waitHuntOver(returnPos,returnLabel)
+    if not isHunting() then return end
+    setFarmStatus("HUNT! Fleeing outside...",C.HuntRed)
+    moveToPos(getOutsidePos(),"outside")
+        local huntDeadline = tick() + 120
+    while isHunting() and _G.BlairHub and Config.AutoFarm and tick() < huntDeadline do
+        task.wait(0.5)
+    end
+    task.wait(1)
+    setFarmStatus("Hunt over — returning...",C.Green)
+    if returnPos then moveToPos(returnPos,returnLabel or "room") end
+end
+
+local function safewait(t)
+    local dead=tick()+t
+    while tick()<dead and _G.BlairHub and Config.AutoFarm do task.wait(0.1) end
+end
+
+local function updateGhostFilter()
+    local possible,total=0,0
+    for name,evidences in pairs(GHOST_DB) do
+        total=total+1
+        local eliminated=false
+        for ev,det in pairs(detectedEvidence) do
+            if det then
+                local has=false
+                for _,ge in ipairs(evidences) do if ge==ev then has=true; break end end
+                if not has then eliminated=true; break end
+            end
+        end
+        if not eliminated then
+            for ev,absent in pairs(evidenceConfirmedAbsent) do
+                if absent then
+                    local has=false
+                    for _,ge in ipairs(evidences) do if ge==ev then has=true; break end end
+                    if has then eliminated=true; break end
+                end
+            end
+        end
+        local cell=ghostCells[name]
+        if cell then
+            local on=not eliminated
+            TweenService:Create(cell.frame,TweenInfo.new(0.2),{
+                BackgroundColor3=on and Color3.fromRGB(28,14,50) or Color3.fromRGB(12,11,18)
+            }):Play()
+            cell.label.TextColor3=on and C.Purple or Color3.fromRGB(42,38,55)
+            if on then possible=possible+1 end
+        end
+    end
+    if ghostCountLbl then
+        ghostCountLbl.Text=possible.." / "..tostring(total).." ghosts possible"
+        ghostCountLbl.TextColor3=possible<=3 and C.Yellow or Color3.fromRGB(130,110,170)
+    end
+    return possible
+end
+
+local function setEvidence(key,detected)
+    if detectedEvidence[key]==detected then return end
+    detectedEvidence[key]=detected
+    local refs=evidenceRefs[key]
+    if refs then
+        TweenService:Create(refs.dot,TweenInfo.new(0.3),{
+            BackgroundColor3=detected and C.Green or Color3.fromRGB(45,42,65)
+        }):Play()
+        refs.status.Text=detected and "DETECTED" or "waiting..."
+        refs.status.TextColor3=detected and C.Green or Color3.fromRGB(75,72,100)
+    end
+    updateGhostFilter()
+end
+
+local function resetEvidence()
+    for _,ev in ipairs(EVIDENCE_INFO) do setEvidence(ev.key,false) end
+    if ghostRoomLbl then
+        ghostRoomLbl.Text="detecting..."
+        ghostRoomLbl.TextColor3=Color3.fromRGB(85,82,115)
+    end
+end
+
+local function getPossibleGhosts()
+    local possible={}
+    for name,evidences in pairs(GHOST_DB) do
+        local eliminated=false
+        for ev,det in pairs(detectedEvidence) do
+            if det then
+                local has=false
+                for _,ge in ipairs(evidences) do if ge==ev then has=true; break end end
+                if not has then eliminated=true; break end
+            end
+        end
+        if not eliminated then
+            for ev,absent in pairs(evidenceConfirmedAbsent) do
+                if absent then
+                    local has=false
+                    for _,ge in ipairs(evidences) do if ge==ev then has=true; break end end
+                    if has then eliminated=true; break end
+                end
+            end
+        end
+        if not eliminated then table.insert(possible,name) end
+    end
+    table.sort(possible)
+    return possible
+end
+
+local function getBestGuess()
+    local best,bestScore=nil,-1
+    local detList={}
+    for ev,det in pairs(detectedEvidence) do if det then table.insert(detList,ev) end end
+    if #detList==0 then return nil,0 end
+    local possible=getPossibleGhosts()
+    for _,name in ipairs(possible) do
+        local evidences=GHOST_DB[name]
+        local score=0
+        for _,de in ipairs(detList) do
+            for _,ge in ipairs(evidences) do if ge==de then score=score+1; break end end
+        end
+        if score>bestScore then bestScore=score; best=name end
+    end
+    return best,bestScore
+end
+
+local function clearDetectionConns()
+    for _,c in ipairs(detectionConns) do pcall(function() c:Disconnect() end) end
+    detectionConns={}
+end
+local function conn(c) table.insert(detectionConns,c) end
+
+local function submitGuess(ghostName)
+    setFarmStatus("Submitting: "..ghostName,C.Green)
+    local r1=getRemote("SelectGhost1")
+    if r1 then pcall(function() r1:FireServer(ghostName) end) end
+    task.wait(0.3)
+    local r2=getRemote("GhostTypeChosen")
+    if r2 then pcall(function() r2:FireServer(ghostName) end) end
+end
+
+-- ============================================================================
+-- [v7.8 FIX] leaveMatch — chỉ tween đến van, KHÔNG auto fire leave
+-- Player tự bấm leave button
+-- ============================================================================
+local function goToVan()
+    setFarmStatus("Done! Go to van to leave...",C.Green)
+    local Map=getMap()
+    local van=Map and Map:FindFirstChild("Van")
+    local vanMdl=van and van:FindFirstChild("Van")
+    if vanMdl then
+        local leaveBtn=vanMdl:FindFirstChild("LeaveButton")
+        local sw=leaveBtn and leaveBtn:FindFirstChild("LightSwitch")
+        if sw and sw:IsA("BasePart") then
+            moveToPos(sw.Position+Vector3.new(0,0,2),"van leave button")
+            return
+        end
+        -- fallback: tween đến van position
+        local p=vanMdl:FindFirstChildWhichIsA("BasePart")
+        if p then moveToPos(p.Position+Vector3.new(0,0,3),"van") end
+    end
+end
+
+-- ============================================================================
+-- PASSIVE DETECTION
+-- ============================================================================
+local function startPassiveDetection(Map)
+    local Zones=Map:FindFirstChild("Zones")
+    local Items=Map:FindFirstChild("Items")
+
+    local function watchPrints()
+        local Prints=Map:FindFirstChild("Prints")
+        if Prints then
+            if #Prints:GetChildren()>0 then setEvidence("UV",true) end
+            conn(Prints.ChildAdded:Connect(function() setEvidence("UV",true) end))
+        end
+        conn(Map.ChildAdded:Connect(function(c)
+            if c.Name=="Prints" then
+                if #c:GetChildren()>0 then setEvidence("UV",true) end
+                conn(c.ChildAdded:Connect(function() setEvidence("UV",true) end))
+            end
+        end))
+    end
+
+    local function watchOrbs()
+        local Orbs=Map:FindFirstChild("Orbs")
+        if Orbs then
+            if #Orbs:GetChildren()>0 then setEvidence("ORB",true) end
+            conn(Orbs.ChildAdded:Connect(function() setEvidence("ORB",true) end))
+        end
+    end
+
+    local function watchFreeze()
+        task.spawn(function()
+            local stable=0
+            while _G.BlairHub and Map.Parent do
+                pcall(function()
+                    if not Zones then return end
+                    local coldest=100
+                    for _,zone in ipairs(Zones:GetChildren()) do
+                        local tv=zone:FindFirstChild("_____Temperature")
+                        if tv and tv.Value<coldest then coldest=tv.Value end
+                    end
+                    if coldest<0 then
+                        stable=stable+1
+                        if stable>=3 then setEvidence("FREEZE",true) end
+                    else stable=0 end
+                end)
+                task.wait(0.3)
+            end
+        end)
+    end
+
+    local function watchEMF(parent)
+        if not parent then return end
+        pcall(function()
+            local tool=parent:FindFirstChild("EMF Reader")
+            if tool then
+                local rlf=tool:FindFirstChild("RecentlyLevelFive")
+                if rlf then
+                    if rlf.Value then setEvidence("EMF5",true) end
+                    conn(rlf.Changed:Connect(function(v) if v then setEvidence("EMF5",true) end end))
+                end
+            end
+            conn(parent.ChildAdded:Connect(function(child)
+                if child.Name=="EMF Reader" then
+                    task.wait(0.2)
+                    local rlf=child:FindFirstChild("RecentlyLevelFive")
+                    if rlf then
+                        conn(rlf.Changed:Connect(function(v) if v then setEvidence("EMF5",true) end end))
+                    end
+                end
+            end))
+        end)
+    end
+
+    local function watchWriting(parent)
+        if not parent then return end
+        pcall(function()
+            local tool=parent:FindFirstChild("Ghost Writing Book")
+            if tool then
+                local w=tool:FindFirstChild("Written")
+                if w then
+                    if w.Value then setEvidence("WRITING",true) end
+                    conn(w.Changed:Connect(function(v) if v then setEvidence("WRITING",true) end end))
+                end
+            end
+        end)
+    end
+
+    local sboxHooked={}
+    local function hookSpiritBoxPassive(sb)
+        if not sb or sboxHooked[sb] then return end
+        sboxHooked[sb]=true
+        pcall(function()
+            local folder=sb:FindFirstChild("GhostTalk")
+            if folder then
+                local function hookSound(sound)
+                    if not sound:IsA("Sound") then return end
+                    conn(sound:GetPropertyChangedSignal("Playing"):Connect(function()
+                        if sound.Playing then
+                            setEvidence("SBOX",true)
+                            print("[Passive SBox] GhostTalk:",sound.Name)
+                        end
+                    end))
+                end
+                for _,s in ipairs(folder:GetChildren()) do hookSound(s) end
+                conn(folder.ChildAdded:Connect(hookSound))
+            end
+        end)
+    end
+
+    local function watchSBoxPassive()
+        local function scan(parent)
+            if not parent then return end
+            pcall(function()
+                local sb=parent:FindFirstChild("Spirit Box")
+                if sb then hookSpiritBoxPassive(sb) end
+                conn(parent.ChildAdded:Connect(function(c)
+                    if c.Name=="Spirit Box" then
+                        task.wait(0.1); hookSpiritBoxPassive(c)
+                    end
+                end))
+            end)
+        end
+        scan(getChar()); scan(getBP()); scan(Items)
+        conn(lp.CharacterAdded:Connect(function(char)
+            task.wait(0.5); scan(char); scan(getBP())
+        end))
+    end
+
+    local function watchSLSPassive()
+        task.spawn(function()
+            while _G.BlairHub and Map.Parent do
+                pcall(function()
+                    local char=getChar()
+                    if not char then return end
+                    local ghost=findGhost()
+                    if ghost then
+                        local hl=ghost:FindFirstChild("Highlight")
+                        if hl and hl.Enabled then
+                            local slsCam=char:FindFirstChild("SLS Camera")
+                            if slsCam then setEvidence("SLS",true) end
+                        end
+                    end
+                end)
+                task.wait(0.4)
+            end
+        end)
+    end
+
+    local function watchRoomDisplay()
+        task.spawn(function()
+            while _G.BlairHub and Map.Parent do
+                pcall(function()
+                    if not Zones or not ghostRoomLbl then return end
+                    local coldName,coldTemp="?",100
+                    for _,zone in ipairs(Zones:GetChildren()) do
+                        local tv=zone:FindFirstChild("_____Temperature")
+                        local excl=zone:FindFirstChild("Exclude")
+                        if tv and tv.Value<coldTemp and not(excl and excl.Value) then
+                            coldTemp=tv.Value; coldName=zone.Name
+                        end
+                    end
+                    if coldTemp<18 then
+                        ghostRoomLbl.Text=coldName.."  ("..math.floor(coldTemp*10)/10 .." C)"
+                        ghostRoomLbl.TextColor3=coldTemp<3 and C.ColdBlue or C.ColdLight
+                    else
+                        ghostRoomLbl.Text="detecting..."
+                        ghostRoomLbl.TextColor3=Color3.fromRGB(85,82,115)
+                    end
+                end)
+                task.wait(0.5)
+            end
+        end)
+    end
+
+    watchPrints(); watchOrbs(); watchFreeze()
+    watchEMF(Items); watchEMF(getBP()); watchEMF(getChar())
+    watchWriting(Items); watchWriting(getBP()); watchWriting(getChar())
+    watchSBoxPassive(); watchSLSPassive(); watchRoomDisplay()
+    conn(lp.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        watchEMF(char); watchEMF(getBP())
+        watchWriting(char); watchWriting(getBP())
+    end))
+end
+
+task.spawn(function()
+    loadGhostDB()
+    local Map=getMap()
+    if Map then task.wait(1.5); startPassiveDetection(Map) end
+    workspace.ChildAdded:Connect(function(child)
+        if child.Name~="Map" or not _G.BlairHub then return end
+        vanDoorOpened=false -- reset khi vào map mới
+        task.wait(1.5)
+        clearDetectionConns(); resetEvidence()
+        refreshPlayerNames()
+        startPassiveDetection(child)
+    end)
+    workspace.ChildRemoved:Connect(function(child)
+        if child.Name~="Map" then return end
+        clearDetectionConns(); resetEvidence()
+        vanDoorOpened=false
+    end)
+end)
+
+-- ============================================================================
+-- [v7.8 FIX] checkEMF — wait equip + wait remote replicate đúng cách
+-- EMF ở BP, cần equipTool trước, chờ char nhận, chờ EMFRemote replicate
+-- ============================================================================
+local function checkEMF(roomPos,roomName)
+    if detectedEvidence["EMF5"] then return end
+    setFarmStatus("EMF: equipping...",C.Yellow)
+
+    -- Đảm bảo có tool trong inventory
+    if not hasInInventory("EMF Reader") then
+        setFarmStatus("EMF: not in inventory",C.TextMuted); return
+    end
+
+    -- Equip tool vào character
+    if not equipTool("EMF Reader") then
+        setFarmStatus("EMF: equip failed",C.Red); return
+    end
+
+    -- Chờ tool thực sự replicate vào character (quan trọng!)
+    local eq=nil
+    local waitT=tick()
+    repeat
+        task.wait(0.15)
+        eq=getEquipped("EMF Reader")
+    until eq or tick()-waitT>4
+
+    if not eq then
+        setFarmStatus("EMF: char replicate timeout",C.Red)
+        return
+    end
+    print("[EMF] Tool in char OK:",eq.Name)
+
+    -- Chờ EMFRemote replicate vào tool (quan trọng!)
+    local emfRemote=nil
+    local waitR=tick()
+    repeat
+        task.wait(0.15)
+        emfRemote=eq:FindFirstChild("EMFRemote")
+        if not emfRemote then
+            eq=getEquipped("EMF Reader")
+            if eq then emfRemote=eq:FindFirstChild("EMFRemote") end
+        end
+    until emfRemote or tick()-waitR>4
+
+    if not emfRemote then
+        setFarmStatus("EMF: remote timeout",C.Red)
+        print("[EMF] Children after wait:",eq and eq:GetChildren() or "nil")
+        return
+    end
+
+    -- Kích hoạt EMF
+    pcall(function() emfRemote:FireServer(true) end)
+    setFarmStatus("EMF: scanning...",C.Yellow)
+    print("[EMF] Remote activated OK")
+
+    local deadline=tick()+22
+    while tick()<deadline and _G.BlairHub and Config.AutoFarm do
+        if isHunting() then
+            pcall(function() if emfRemote then emfRemote:FireServer(false) end end)
+            waitHuntOver(roomPos,roomName)
+            -- Re-equip sau hunt
+            if not equipTool("EMF Reader") then return end
+            local wt=tick()
+            repeat task.wait(0.15); eq=getEquipped("EMF Reader") until eq or tick()-wt>3
+            if not eq then return end
+            local wr=tick()
+            repeat task.wait(0.15); emfRemote=eq:FindFirstChild("EMFRemote") until emfRemote or tick()-wr>3
+            if emfRemote then pcall(function() emfRemote:FireServer(true) end) end
+            deadline=tick()+14
+        end
+
+        eq=getEquipped("EMF Reader")
+        if eq then
+            local rlf=eq:FindFirstChild("RecentlyLevelFive")
+            if rlf and rlf.Value then
+                setEvidence("EMF5",true)
+                setFarmStatus("EMF5 DETECTED!",C.Yellow)
+                pcall(function()
+                    local r=eq:FindFirstChild("EMFRemote")
+                    if r then r:FireServer(false) end
+                end)
+                returnTool("EMF Reader"); return
+            end
+        end
+        task.wait(0.2)
+    end
+
+    pcall(function() if emfRemote then emfRemote:FireServer(false) end end)
+    recordMiss("EMF5")
+    markAbsent("EMF5")
+    returnTool("EMF Reader")
+    setFarmStatus("EMF: no level 5",C.TextMuted)
+end
+
+local function checkWriting(roomPos,roomName)
+    if detectedEvidence["WRITING"] then return end
+    setFarmStatus("Writing: checking...",C.Orange)
+    if not hasInInventory("Ghost Writing Book") then return end
+    if not equipTool("Ghost Writing Book") then return end
+
+    -- Chờ replicate
+    local eq=nil
+    local wt=tick()
+    repeat task.wait(0.15); eq=getEquipped("Ghost Writing Book") until eq or tick()-wt>3
+    if not eq then return end
+
+    -- Mobile flag
+    pcall(function()
+        local r=eq:FindFirstChild("Mobile")
+        if r then r:FireServer("IsMobile",false) end
+    end)
+
+    local deadline=tick()+22
+    while tick()<deadline and _G.BlairHub and Config.AutoFarm do
+        if isHunting() then
+            waitHuntOver(roomPos,roomName)
+            if not equipTool("Ghost Writing Book") then return end
+            deadline=tick()+12
+        end
+        eq=getEquipped("Ghost Writing Book")
+        if eq then
+            local w=eq:FindFirstChild("Written")
+            if w and w.Value then
+                setEvidence("WRITING",true)
+                setFarmStatus("WRITING DETECTED!",C.Orange)
+                returnTool("Ghost Writing Book"); return
+            end
+        end
+        local Items2=getItems()
+        if Items2 then
+            local book=Items2:FindFirstChild("Ghost Writing Book")
+            if book then
+                local w=book:FindFirstChild("Written")
+                if w and w.Value then
+                    setEvidence("WRITING",true)
+                    setFarmStatus("WRITING DETECTED (floor)!",C.Orange)
+                    returnTool("Ghost Writing Book"); return
+                end
+            end
+        end
+        task.wait(0.2)
+    end
+    recordMiss("WRITING")
+    markAbsent("WRITING")
+    returnTool("Ghost Writing Book")
+    setFarmStatus("Writing: no response",C.TextMuted)
+end
+
+local function checkSLS(roomPos,roomName)
+    if detectedEvidence["SLS"] then return end
+    setFarmStatus("SLS: equipping...",C.Orange)
+
+    local function ensureSLS()
+        if getEquipped("SLS Camera") then return true end
+        if not hasInInventory("SLS Camera") then return false end
+        return equipTool("SLS Camera")
+    end
+
+    if not ensureSLS() then
+        setFarmStatus("SLS Camera not found",C.TextMuted)
+        recordMiss("SLS")
+        return
+    end
+    task.wait(0.8)
+
+    local ghost=findGhost()
+    if ghost then
+        local anchor=ghost:FindFirstChildWhichIsA("BasePart")
+        if anchor then
+            local targetPos=anchor.Position+Vector3.new(math.random(-5,5),0,8)
+            moveToPos(targetPos,"SLS position")
+            task.wait(0.3)
+        end
+    end
+
+    local function faceGhost()
+        pcall(function()
+            local g=findGhost()
+            local anchor=g and g:FindFirstChildWhichIsA("BasePart")
+            local hrp=getChar() and getChar():FindFirstChild("HumanoidRootPart")
+            if anchor and hrp then
+                workspace.CurrentCamera.CFrame=CFrame.lookAt(
+                    hrp.Position+Vector3.new(0,1.5,0),anchor.Position)
+            end
+        end)
+    end
+
+    local function findOverlay()
+        local char=getChar()
+        if not char then return nil end
+        local cam=char:FindFirstChild("SLS Camera")
+        if not cam then return nil end
+        local overlay=nil
+        pcall(function() overlay=cam:FindFirstChild("AnomalyOverlay",true) end)
+        if not overlay then
+            pcall(function()
+                local base=cam:FindFirstChild("Base")
+                local screen=base and base:FindFirstChild("Screen")
+                local sg2=screen and screen:FindFirstChild("SurfaceGui")
+                local ui=sg2 and sg2:FindFirstChild("SLSCameraUi")
+                if ui then overlay=ui:FindFirstChild("AnomalyOverlay",true) end
+            end)
+        end
+        return overlay
+    end
+
+    local slsGhostDetected=false
+    local slsGhostConn=workspace.ChildAdded:Connect(function(child)
+        if child.Name=="SLS_GHOST" then slsGhostDetected=true end
+    end)
+    if workspace:FindFirstChild("SLS_GHOST") then slsGhostDetected=true end
+
+    -- Hook DANGER sound trong SLS Camera
+    pcall(function()
+        local eq=getEquipped("SLS Camera")
+        if not eq then return end
+        local danger=eq:FindFirstChild("DANGER")
+        if danger and danger:IsA("Sound") then
+            danger:GetPropertyChangedSignal("Playing"):Connect(function()
+                if danger.Playing then
+                    slsGhostDetected=true
+                    print("[SLS] DANGER sound played")
+                end
+            end)
+            print("[SLS] DANGER sound hooked")
+        end
+    end)
+    faceGhost()
+    setFarmStatus("SLS: watching...",C.Orange)
+
+    local deadline=tick()+20
+    local faceTimer=tick()
+    local reequipTimer=tick()
+
+    while tick()<deadline and _G.BlairHub and Config.AutoFarm do
+        if isHunting() then
+            slsGhostConn:Disconnect()
+            waitHuntOver(roomPos,roomName)
+            if not ensureSLS() then return end
+            slsGhostDetected=workspace:FindFirstChild("SLS_GHOST") and true or false
+            slsGhostConn=workspace.ChildAdded:Connect(function(child)
+                if child.Name=="SLS_GHOST" then slsGhostDetected=true end
+            end)
+            faceGhost(); deadline=tick()+12
+            faceTimer=tick(); reequipTimer=tick()
+        end
+        if tick()-faceTimer>=0.8 then faceGhost(); faceTimer=tick() end
+        if tick()-reequipTimer>=2 then
+            if not getEquipped("SLS Camera") then
+                setFarmStatus("SLS: re-equipping...",C.Orange)
+                if not ensureSLS() then break end
+                faceGhost()
+            end
+            reequipTimer=tick()
+        end
+        if slsGhostDetected then
+            setEvidence("SLS",true)
+            setFarmStatus("SLS DETECTED!",C.Orange)
+            pcall(function() slsGhostConn:Disconnect() end)
+            returnTool("SLS Camera"); return
+        end
+        local overlay=findOverlay()
+        if overlay and overlay.Visible then
+            setEvidence("SLS",true)
+            setFarmStatus("SLS DETECTED! (overlay)",C.Orange)
+            pcall(function() slsGhostConn:Disconnect() end)
+            returnTool("SLS Camera"); return
+        end
+        task.wait(0.2)
+    end
+    pcall(function() slsGhostConn:Disconnect() end)
+    recordMiss("SLS")
+    markAbsent("SLS")
+    returnTool("SLS Camera")
+    setFarmStatus("SLS: no anomaly",C.TextMuted)
+end
+
+-- ============================================================================
+-- checkSBox — SpiritBoxError detect
+-- ============================================================================
+local function checkSBox(roomPos,roomName)
+    if detectedEvidence["SBOX"] then return end
+    setFarmStatus("Spirit Box: equipping...",C.FlyBlue)
+
+    local function ensureSBox()
+        if getEquipped("Spirit Box") then return true end
+        if not hasInInventory("Spirit Box") then return false end
+        return equipTool("Spirit Box")
+    end
+
+    if not ensureSBox() then
+        setFarmStatus("Spirit Box not found",C.TextMuted); return
+    end
+    task.wait(0.5)
+
+    local ghost=findGhost()
+    if ghost then
+        local anchor=ghost:FindFirstChildWhichIsA("BasePart")
+        if anchor then
+            moveToPos(anchor.Position+Vector3.new(math.random(-4,4),0,math.random(-4,4)),"SBox near ghost")
+            task.wait(0.3)
+            if not ensureSBox() then return end
+        end
+    end
+
+    local detected=false
+    local soundConns={}
+    local function hookSounds()
+        local eq=getEquipped("Spirit Box")
+        if not eq then return end
+        local folder=eq:FindFirstChild("GhostTalk")
+        if not folder then return end
+        for _,sound in ipairs(folder:GetChildren()) do
+            if sound:IsA("Sound") then
+                table.insert(soundConns,sound:GetPropertyChangedSignal("Playing"):Connect(function()
+                    if sound.Playing then detected=true; print("[SBox] GhostTalk:",sound.Name) end
+                end))
+            end
+        end
+        table.insert(soundConns,folder.ChildAdded:Connect(function(s)
+            if s:IsA("Sound") then
+                table.insert(soundConns,s:GetPropertyChangedSignal("Playing"):Connect(function()
+                    if s.Playing then detected=true end
+                end))
+            end
+        end))
+        print("[SBox] Hooked",#folder:GetChildren(),"sounds")
+    end
+    -- Hook thêm ProximitySFX (Close/Near/NextToYou = ghost gần)
+    pcall(function()
+        local eq=getEquipped("Spirit Box")
+        if not eq then return end
+        local prox=eq:FindFirstChild("ProximitySFX")
+        if not prox then return end
+        for _,snd in ipairs(prox:GetChildren()) do
+            if snd:IsA("Sound") then
+                local n=snd.Name:lower()
+                if n=="close" or n=="near" or n=="nexttoyou" or n=="rightbyyou" then
+                    table.insert(soundConns,snd:GetPropertyChangedSignal("Playing"):Connect(function()
+                        if snd.Playing then
+                            detected=true
+                            print("[SBox] ProximitySFX:",snd.Name)
+                        end
+                    end))
+                end
+            end
+        end
+        print("[SBox] Hooked ProximitySFX OK")
+    end)
+    hookSounds()
+
+    local function cleanSoundConns()
+        for _,c in ipairs(soundConns) do pcall(function() c:Disconnect() end) end
+        soundConns={}
+    end
+
+    local function askAndCheck(btn)
+        local eq=getEquipped("Spirit Box")
+        local aq=eq and eq:FindFirstChild("AskQuestion")
+        if not aq then return false end
+
+        local g=findGhost()
+        local hrp=getChar() and getChar():FindFirstChild("HumanoidRootPart")
+        local anchor=g and g:FindFirstChildWhichIsA("BasePart")
+        if hrp and anchor then
+            local dist=(hrp.Position-anchor.Position).Magnitude
+            if dist>14 then
+                moveToPos(anchor.Position+Vector3.new(math.random(-4,4),0,math.random(-4,4)),"approach ghost")
+                task.wait(0.3)
+                if not ensureSBox() then return false end
+                eq=getEquipped("Spirit Box")
+                aq=eq and eq:FindFirstChild("AskQuestion")
+                if not aq then return false end
+            end
+        end
+
+        local gotError=false
+        local errorConn=nil
+        local sboxErr=eq:FindFirstChild("SpiritBoxError")
+        if sboxErr and sboxErr:IsA("RemoteEvent") then
+            errorConn=sboxErr.OnClientEvent:Connect(function() gotError=true end)
+        else
+            print("[SBox] Warning: SpiritBoxError not found, using sound only")
+            pcall(function() aq:FireServer(btn) end)
+            local ws=tick()
+            while tick()-ws<2.2 and not detected do task.wait(0.08) end
+            return detected
+        end
+
+        pcall(function() aq:FireServer(btn) end)
+        print("[SBox] Asked:",btn)
+
+        local waitStart=tick()
+        while tick()-waitStart<2.2 and not gotError and not detected do
+            task.wait(0.08)
+        end
+        if errorConn then pcall(function() errorConn:Disconnect() end) end
+
+        if detected then return true end
+        if not gotError then
+            print("[SBox] No SpiritBoxError → ghost responded!")
+            return true
+        end
+        print("[SBox] SpiritBoxError received → no response")
+        return false
+    end
+
+    local myToken={}
+    sboxToken=myToken
+    setFarmStatus("Spirit Box: asking ghost...",C.FlyBlue)
+
+    local deadline=tick()+32
+    local reequipTimer=tick()
+    local askCount=0
+
+    while tick()<deadline and not detected and _G.BlairHub and Config.AutoFarm do
+        if sboxToken~=myToken then break end
+
+        if isHunting() then
+            cleanSoundConns()
+            waitHuntOver(roomPos,roomName)
+            if not ensureSBox() then break end
+            hookSounds()
+            myToken={}; sboxToken=myToken
+            deadline=tick()+22
+            reequipTimer=tick()
+        end
+
+        if tick()-reequipTimer>=2.5 then
+            if not getEquipped("Spirit Box") then
+                setFarmStatus("SBox: re-equipping...",C.FlyBlue)
+                if not ensureSBox() then break end
+                cleanSoundConns(); hookSounds()
+            end
+            reequipTimer=tick()
+        end
+
+        askCount=askCount+1
+        setFarmStatus(string.format("Spirit Box: ask #%d...",askCount),C.FlyBlue)
+        local btn=(askCount%2==1) and "ButtonA" or "ButtonB"
+        local responded=askAndCheck(btn)
+        if responded then detected=true; break end
+        safewait(1.5)
+    end
+
+    sboxToken={}
+    cleanSoundConns()
+
+    if detected then
+        setEvidence("SBOX",true)
+        setFarmStatus("SPIRIT BOX DETECTED!",C.FlyBlue)
+    else
+        recordMiss("SBOX")
+        if askCount>0 then markAbsent("SBOX") end
+        setFarmStatus("SBox: no response",C.TextMuted)
+    end
+    returnTool("Spirit Box")
+end
+
+-- ============================================================================
+-- [v8.2] Do All Quests — handler riêng cho từng objective (phương án A)
+-- Mỗi objective trên Whiteboard có 1 BoolValue HasCompleted để biết đã xong.
+-- Tùy nội dung objective mà dispatch sang handler tương ứng.
+-- ============================================================================
+local function findObjectivesFolder()
+    local Map = getMap()
+    if not Map then return nil end
+    local van = Map:FindFirstChild("Van")
+    if not van then return nil end
+    local vanMdl = van:FindFirstChild("Van")
+    local screens = van:FindFirstChild("Screens") or (vanMdl and vanMdl:FindFirstChild("Screens"))
+    local wb = screens and screens:FindFirstChild("Whiteboard")
+    local sg2 = wb and wb:FindFirstChild("SurfaceGui")
+    local fr = sg2 and sg2:FindFirstChild("Frame")
+    return fr and fr:FindFirstChild("Objectives")
+end
+
+-- Quay camera nhìn vào part (để chụp ảnh đúng subject)
+local function lookAtPart(targetPart)
+    pcall(function()
+        local hrp = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+        if hrp and targetPart then
+            workspace.CurrentCamera.CFrame = CFrame.lookAt(
+                hrp.Position + Vector3.new(0, 1.5, 0), targetPart.Position)
+        end
+    end)
+end
+
+-- Chụp ảnh: equip Photo Camera, tới gần subject, nhắm vào và fire TakePhoto
+local function objPhoto(subjectPart, label)
+    if not subjectPart then return false end
+    if not (hasInInventory("Photo Camera") or getEquipped("Photo Camera")) then
+        if not bringTool("Photo Camera") then return false end
+    end
+    if not equipTool("Photo Camera") then return false end
+    moveToPos(subjectPart.Position + Vector3.new(0, 0, 8), label or "photo subject")
+    task.wait(0.3)
+    local takePhoto = nil
+    pcall(function()
+        local svc = RS:FindFirstChild("PhotoCameraService")
+        local ev = svc and svc:FindFirstChild("Events")
+        takePhoto = ev and ev:FindFirstChild("TakePhoto")
+    end)
+    for _ = 1, 5 do
+        if not _G.BlairHub then break end
+        lookAtPart(subjectPart)
+        task.wait(0.15)
+        pcall(function() if takePhoto then takePhoto:InvokeServer() end end)
+        task.wait(0.4)
+    end
+    returnTool("Photo Camera")
+    return true
+end
+
+-- Thermometer dưới ngưỡng nhiệt: equip Thermometer, tới phòng lạnh nhất, đợi IsFreezing
+local function objThermometer(deadline)
+    if not (hasInInventory("Thermometer") or getEquipped("Thermometer")) then
+        if not bringTool("Thermometer") then return false end
+    end
+    if not equipTool("Thermometer") then return false end
+    local rooms = getSortedRooms()
+    if #rooms > 0 then moveToPos(rooms[1].pos, "coldest room") end
+    task.wait(0.5)
+    while tick() < deadline and _G.BlairHub do
+        local eq = getEquipped("Thermometer")
+        local frz = eq and eq:FindFirstChild("IsFreezing")
+        if frz and frz.Value then return true end
+        local items = getItems()
+        local t2 = items and items:FindFirstChild("Thermometer")
+        local frz2 = t2 and t2:FindFirstChild("IsFreezing")
+        if frz2 and frz2.Value then return true end
+        task.wait(0.3)
+    end
+    return false
+end
+
+-- Tim Boo-Boo Doll trong workspace (Workspace.BooBooDoll hoac trong Items/CursedSpawns)
+local function findBooBoo()
+    local boo = workspace:FindFirstChild("BooBooDoll")
+    if boo then return boo end
+    local items = getItems()
+    if items then
+        local p = items:FindFirstChild("The Panda") or items:FindFirstChild("BooBooDoll")
+        if p then return p end
+    end
+    return nil
+end
+
+-- Lay part dai dien cua 1 object (BasePart hoac con BasePart)
+local function partOf(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    return obj:FindFirstChildWhichIsA("BasePart")
+end
+
+-- Fire moi ProximityPrompt cua 1 object (dung cho free/pickup/use)
+local function firePromptsOf(obj)
+    if not obj then return false end
+    local fired = false
+    for _, d in ipairs(obj:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            pcall(function()
+                d.MaxActivationDistance = 32
+                d.HoldDuration = 0
+                if fireproximityprompt then fireproximityprompt(d); fired = true end
+            end)
+        end
+    end
+    -- prompt co the o chinh obj
+    if obj:IsA("BasePart") then
+        for _, d in ipairs(obj:GetChildren()) do
+            if d:IsA("ProximityPrompt") then
+                pcall(function()
+                    d.MaxActivationDistance = 32
+                    d.HoldDuration = 0
+                    if fireproximityprompt then fireproximityprompt(d); fired = true end
+                end)
+            end
+        end
+    end
+    return fired
+end
+
+-- Giai phong Boo-Boo Doll: TP toi cho no roi fire prompt
+local function objFreeBooBoo(deadline)
+    local boo = findBooBoo()
+    if not boo then return false end
+    local part = partOf(boo)
+    if part then tweenToPos(part.Position + Vector3.new(0, 0, 2), "Boo-Boo Doll", 50); task.wait(0.3) end
+    for _ = 1, 5 do
+        if not _G.BlairHub then break end
+        firePromptsOf(boo)
+        task.wait(0.4)
+    end
+    return true
+end
+
+-- Liet ke tat ca cursed object trong CursedSpawns + Boo-Boo
+local function listCursedObjects()
+    local out = {}
+    local Map = getMap()
+    local cs = Map and Map:FindFirstChild("CursedSpawns")
+    if cs then
+        for _, v in ipairs(cs:GetChildren()) do
+            if partOf(v) then table.insert(out, v) end
+        end
+    end
+    local boo = findBooBoo()
+    if boo then table.insert(out, boo) end
+    return out
+end
+
+-- Chup anh tat ca cursed object (gom ca Boo-Boo)
+local function objPhotoCursed(deadline)
+    local objs = listCursedObjects()
+    if #objs == 0 then return false end
+    if not (hasInInventory("Photo Camera") or getEquipped("Photo Camera")) then
+        if not bringTool("Photo Camera") then return false end
+    end
+    if not equipTool("Photo Camera") then return false end
+    local any = false
+    for _, obj in ipairs(objs) do
+        if not _G.BlairHub then break end
+        local part = partOf(obj)
+        if part then
+            objPhoto(part, "cursed: " .. obj.Name)
+            any = true
+        end
+    end
+    return any
+end
+
+-- Dung cursed object: TP toi cursed object trong CursedSpawns, equip neu cam duoc, fire use/prompt
+local function objCursed(deadline)
+    -- Uu tien: dung cursed object dat san trong map (CursedSpawns)
+    local Map = getMap()
+    local cs = Map and Map:FindFirstChild("CursedSpawns")
+    if cs then
+        for _, v in ipairs(cs:GetChildren()) do
+            local part = partOf(v)
+            if part then
+                tweenToPos(part.Position + Vector3.new(0, 0, 2), "cursed: " .. v.Name, 50)
+                task.wait(0.3)
+                for _ = 1, 4 do
+                    if not _G.BlairHub then break end
+                    firePromptsOf(v)
+                    task.wait(0.3)
+                end
+                -- Tarot dung bindable rieng
+                pcall(function()
+                    if v.Name:lower():find("tarot", 1, true) then
+                        local bind = RS:FindFirstChild("Bindables")
+                        local t = bind and bind:FindFirstChild("TarotCardsMonstrosity")
+                        if t then t:Fire() end
+                    end
+                end)
+                return true
+            end
+        end
+    end
+
+    -- Fallback: cursed item co the cam tay
+    local CURSED = {"Tarot Cards", "Music Box", "Voodoo Doll", "Summoning Circle", "Monkey Paw", "Haunted Mirror"}
+    local picked = nil
+    for _, nm in ipairs(CURSED) do
+        if hasInInventory(nm) or getEquipped(nm) then picked = nm; break end
+    end
+    if not picked then
+        for _, nm in ipairs(CURSED) do
+            if getTotalToolCount() < 3 and bringTool(nm) then picked = nm; break end
+        end
+    end
+    if not picked then return false end
+    equipTool(picked)
+    task.wait(0.4)
+    pcall(function()
+        local bind = RS:FindFirstChild("Bindables")
+        if picked == "Tarot Cards" then
+            local t = bind and bind:FindFirstChild("TarotCardsMonstrosity")
+            if t then t:Fire() end
+        end
+    end)
+    local eq = getEquipped(picked)
+    if eq then firePromptsOf(eq) end
+    return true
+end
+
+-- Incense Burner: equip, tới ghost room, fire Incense bindable
+local function objIncense(deadline)
+    if not (hasInInventory("Incense Burner") or getEquipped("Incense Burner")) then
+        if not bringTool("Incense Burner") then return false end
+    end
+    if not equipTool("Incense Burner") then return false end
+    local ghost = findGhost()
+    if ghost then
+        local a = ghost:FindFirstChildWhichIsA("BasePart")
+        if a then moveToPos(a.Position + Vector3.new(2, 0, 2), "ghost room incense") end
+    else
+        local rooms = getSortedRooms()
+        if #rooms > 0 then moveToPos(rooms[1].pos, "coldest room incense") end
+    end
+    task.wait(0.4)
+    pcall(function()
+        local bind = RS:FindFirstChild("Bindables")
+        local inc = bind and bind:FindFirstChild("Incense")
+        if inc then inc:Fire() end
+    end)
+    local eq = getEquipped("Incense Burner")
+    if eq then
+        for _, d in ipairs(eq:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                pcall(function() d.MaxActivationDistance = 32; if fireproximityprompt then fireproximityprompt(d) end end)
+            end
+        end
+    end
+    return true
+end
+
+-- Đặt Trail Camera trong ghost room (ghost tự trigger -> passive hoàn thành)
+local function objTrailCamera(deadline)
+    if not (hasInInventory("Trail Camera") or getEquipped("Trail Camera")) then
+        if not bringTool("Trail Camera") then return false end
+    end
+    if not equipTool("Trail Camera") then return false end
+    local ghost = findGhost()
+    local rooms = getSortedRooms()
+    local dest = (ghost and ghost:FindFirstChildWhichIsA("BasePart") and ghost:FindFirstChildWhichIsA("BasePart").Position)
+        or (rooms[1] and rooms[1].pos)
+    if dest then moveToPos(dest, "ghost room trailcam") end
+    task.wait(0.4)
+    local eq = getEquipped("Trail Camera")
+    if eq then
+        for _, d in ipairs(eq:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                pcall(function() d.MaxActivationDistance = 32; if fireproximityprompt then fireproximityprompt(d) end end)
+            end
+        end
+    end
+    return true -- đã đặt, phần trigger là passive
+end
+
+-- Dispatch theo nội dung objective
+local function runObjectiveHandler(objName)
+    local n = objName:lower()
+    local deadline = tick() + 30
+
+    -- "free / release the boo-boo doll" -> fire prompt giai phong
+    if (n:find("free") or n:find("release") or n:find("save")) and (n:find("boo") or n:find("doll")) then
+        return objFreeBooBoo(deadline)
+
+    -- chup anh: phan biet cursed/boo-boo vs ghost vs subject thuong
+    elseif n:find("photo") or n:find("picture") or n:find("capture") then
+        if n:find("cursed") then
+            return objPhotoCursed(deadline)
+        elseif n:find("boo") or n:find("panda") or n:find("doll") then
+            local boo = findBooBoo()
+            local part = partOf(boo)
+            return objPhoto(part, "Boo-Boo Doll")
+        else
+            local ghost = findGhost()
+            local part = ghost and ghost:FindFirstChildWhichIsA("BasePart")
+            return objPhoto(part, "Ghost photo")
+        end
+
+    elseif n:find("thermomet") or n:find("freezing") or (n:find("under") and n:find("c")) then
+        return objThermometer(deadline)
+
+    -- "use a cursed object" -> dung cursed; neu doi hoi chup thi da bat o nhanh photo tren
+    elseif n:find("cursed") then
+        return objCursed(deadline)
+
+    elseif n:find("incense") or n:find("cleanse") or n:find("smudge") or n:find("stun") then
+        return objIncense(deadline)
+
+    elseif n:find("trail") then
+        return objTrailCamera(deadline)
+    end
+    return nil -- khong co handler -> skip
+end
+
+local function doAllQuests()
+    setFarmStatus("Auto quests: scanning...", C.FlyBlue)
+    if not getMap() then setFarmStatus("Map not found!", C.Red); return 0 end
+    local objs = findObjectivesFolder()
+    if not objs then setFarmStatus("Objectives not found!", C.Red); return 0 end
+    -- Debug: in tên tất cả objectives
+    for _, obj in ipairs(objs:GetChildren()) do
+        local hc = obj:FindFirstChild("HasCompleted")
+        print(string.format("[Quest] '%s' | done=%s", obj.Name, tostring(hc and hc.Value)))
+    end
+
+    local done, skipped = 0, 0
+    for _, obj in ipairs(objs:GetChildren()) do
+        if not _G.BlairHub then break end
+        local hc = obj:FindFirstChild("HasCompleted")
+        if hc and not hc.Value then
+            setFarmStatus("Obj: " .. obj.Name:sub(1, 32), C.FlyPurple)
+            local handled = false
+            local ok, res = pcall(runObjectiveHandler, obj.Name)
+            if ok and res ~= nil then handled = true end
+            if handled then
+                -- chờ HasCompleted lật sang true (tối đa 6s)
+                local wd = tick() + 6
+                while tick() < wd and not hc.Value and _G.BlairHub do task.wait(0.3) end
+                if hc.Value then done = done + 1 else skipped = skipped + 1 end
+            else
+                skipped = skipped + 1
+            end
+        end
+    end
+    setFarmStatus(string.format("Quests: %d done, %d skipped", done, skipped),
+        done > 0 and C.Green or C.Orange)
+    return done
+end
+
+-- ============================================================================
+-- AUTO FARM v7.8
+-- Flow: Open van door → Pickup 3 tools (EMF+Writing+SLS) → Go ghost room
+--       → Test all 3 → Drop all → Pickup Spirit Box → Test SBox
+--       → Submit → Tween to van (player bấm leave thủ công)
+-- ============================================================================
+local function trySubmitAndGoVan(possible)
+    if #possible==1 then
+        setFarmStatus("IDENTIFIED: "..possible[1].."!",C.Green)
+        submitGuess(possible[1])
+        task.wait(1.5)
+        goToVan()
+        return true
+    end
+    return false
+end
+
+local function runAutoFarm()
+    if AUTO_FARM.running then return end
+    AUTO_FARM.running=true
+    local ok,err=pcall(function()
+        setFarmStatus("Starting v7.8...",C.TextDim)
+        resetEvidence(); resetMissCounts(); refreshPlayerNames()
+        vanDoorOpened=false
+
+        if not loadGhostDB() then setFarmStatus("Ghost DB load failed!",C.Red); return end
+
+        local waited=0
+        while not getMap() and waited<20 and _G.BlairHub and Config.AutoFarm do
+            task.wait(1); waited=waited+1
+        end
+        if not getMap() then setFarmStatus("Map not found!",C.Red); return end
+
+        -- STEP 0: Mở van door trước tiên
+        setFarmStatus("Opening van door...",C.Yellow)
+        openVanDoor()
+        task.wait(0.5)
+        if not _G.BlairHub or not Config.AutoFarm then return end
+
+        -- STEP 0.5: Auto hoàn thành quest
+        doAllQuests()
+        task.wait(0.5)
+        if not _G.BlairHub or not Config.AutoFarm then return end
+
+        -- STEP 1: Passive scan nhanh
+        setFarmStatus("Passive scan...",C.TextDim)
+        local Map=getMap()
+        pcall(function()
+            local Prints=Map:FindFirstChild("Prints")
+            if Prints and #Prints:GetChildren()>0 then setEvidence("UV",true) end
+            local Orbs=Map:FindFirstChild("Orbs")
+            if Orbs and #Orbs:GetChildren()>0 then setEvidence("ORB",true) end
+            local Zones=getZones()
+            if Zones then
+                for _,zone in ipairs(Zones:GetChildren()) do
+                    local tv=zone:FindFirstChild("_____Temperature")
+                    if tv and tv.Value<0 then setEvidence("FREEZE",true); break end
+                end
+            end
+            if workspace:FindFirstChild("SLS_GHOST") then setEvidence("SLS",true) end
+        end)
+        safewait(0.5)
+        if not _G.BlairHub or not Config.AutoFarm then return end
+        if trySubmitAndGoVan(getPossibleGhosts()) then return end
+
+        -- STEP 2: Pickup 3 tools (EMF + Writing + SLS)
+        -- 3 slot mặc định → pick từng cái, không drop tool kia
+        setFarmStatus("Pickup: EMF + Writing + SLS...",C.Yellow)
+        for _,toolName in ipairs({"EMF Reader","Ghost Writing Book","SLS Camera"}) do
+            if not _G.BlairHub or not Config.AutoFarm then break end
+            if not hasInInventory(toolName) then
+                setFarmStatus("Pickup: "..toolName,C.Yellow)
+                for attempt=1,3 do
+                    if bringTool(toolName) then break end
+                    task.wait(0.6)
+                end
+            end
+        end
+        print("[Farm] Inventory after pickup 3 tools:",getTotalToolCount())
+
+        -- STEP 3: Tìm ghost room và scan
+        setFarmStatus("Finding ghost room...",C.FlyPurple)
+        local _,ghostRoomPos=goToGhostRoom()
+        safewait(0.5)
+
+        local rooms = getSortedRooms()
+        local coldRooms = {}
+        -- Lấy top 3 phòng lạnh nhất, bỏ qua Outside
+        for _, r in ipairs(rooms) do
+            if r.name ~= "Outside" then
+                table.insert(coldRooms, r)
+                if #coldRooms >= 3 then break end
+            end
+        end
+        if #coldRooms == 0 then
+            coldRooms = rooms
+        end
+        print(string.format("[Farm] Scan %d phòng: %s",
+            #coldRooms,
+            table.concat((function()
+                local t = {}
+                for _, r in ipairs(coldRooms) do
+                    table.insert(t, r.name.."("..math.floor(r.temp).."°)")
+                end
+                return t
+            end)(), ", ")
+        ))
+
+        local roomsToScan={}
+        if ghostRoomPos then
+            table.insert(roomsToScan,{pos=ghostRoomPos,name="GhostRoom",temp=-99})
+        end
+        for _,r in ipairs(coldRooms) do
+            if not ghostRoomPos or (r.pos-ghostRoomPos).Magnitude>5 then
+                table.insert(roomsToScan,r)
+            end
+        end
+
+        -- Scan từng room với 3 tool
+        for i,room in ipairs(roomsToScan) do
+            if not _G.BlairHub or not Config.AutoFarm then break end
+            -- Early exit nếu chỉ còn 1 ghost possible
+            if #getPossibleGhosts() == 1 then
+                if trySubmitAndGoVan(getPossibleGhosts()) then return end
+            end
+            if i>1 then
+                setFarmStatus(string.format("Room %d/%d: %s",i,#roomsToScan,room.name),C.FlyPurple)
+                if isHunting() then waitHuntOver(room.pos,room.name) end
+                tweenToPos(room.pos, room.name, 55); safewait(0.2)
+            end
+
+            if not shouldSkip("EMF5") and hasInInventory("EMF Reader") then
+                checkEMF(room.pos,room.name)
+                if not _G.BlairHub or not Config.AutoFarm then break end
+                if trySubmitAndGoVan(getPossibleGhosts()) then return end
+            end
+
+            if not shouldSkip("WRITING") and hasInInventory("Ghost Writing Book") then
+                checkWriting(room.pos,room.name)
+                if not _G.BlairHub or not Config.AutoFarm then break end
+                if trySubmitAndGoVan(getPossibleGhosts()) then return end
+            end
+
+            if not shouldSkip("SLS") and hasInInventory("SLS Camera") then
+                checkSLS(room.pos,room.name)
+                if not _G.BlairHub or not Config.AutoFarm then break end
+                if trySubmitAndGoVan(getPossibleGhosts()) then return end
+            end
+
+            if detectedEvidence["EMF5"] and detectedEvidence["WRITING"] and detectedEvidence["SLS"] then break end
+        end
+
+        if not _G.BlairHub or not Config.AutoFarm then return end
+        if trySubmitAndGoVan(getPossibleGhosts()) then return end
+
+        -- STEP 4: Drop 3 tools cũ, pickup Spirit Box
+        setFarmStatus("Dropping old tools, pickup Spirit Box...",C.FlyBlue)
+
+        -- Drop EMF, Writing, SLS nếu đang cầm
+        for _,toolName in ipairs({"EMF Reader","Ghost Writing Book","SLS Camera"}) do
+            if getEquipped(toolName) then
+                returnTool(toolName); task.wait(0.3)
+            end
+        end
+        -- Drop hết BP nếu vẫn còn slot
+        local dropAttempts=0
+        while getTotalToolCount()>=3 and dropAttempts<5 do
+            dropCurrentTool(); task.wait(0.3)
+            dropAttempts=dropAttempts+1
+        end
+
+        -- Pickup Spirit Box
+        for attempt=1,3 do
+            if bringTool("Spirit Box") then break end
+            task.wait(0.6)
+        end
+
+        if not hasInInventory("Spirit Box") then
+            setFarmStatus("Spirit Box not available",C.TextMuted)
+        else
+        -- Return to ghost room for SBox
+        if ghostRoomPos then tweenToPos(ghostRoomPos, "GhostRoom", 50) end
+            safewait(0.3)
+
+            if not shouldSkip("SBOX") then
+                for i,room in ipairs(roomsToScan) do
+                    if not _G.BlairHub or not Config.AutoFarm then break end
+                    if detectedEvidence["SBOX"] then break end
+                    if i>1 then
+                        if isHunting() then waitHuntOver(room.pos,room.name) end
+                        moveToPos(room.pos,room.name); safewait(0.3)
+                        if not getEquipped("Spirit Box") then equipTool("Spirit Box") end
+                    end
+                    checkSBox(room.pos,room.name)
+                    if trySubmitAndGoVan(getPossibleGhosts()) then return end
+                end
+            end
+        end
+
+        if not _G.BlairHub or not Config.AutoFarm then return end
+
+        -- STEP 5: Recheck nếu còn tool chưa detect đủ
+        local recheckList={}
+        for _,ev in ipairs(EVIDENCE_INFO) do
+            if not detectedEvidence[ev.key]
+            and (evidenceMissCount[ev.key] or 0)>0
+            and (evidenceMissCount[ev.key] or 0)<MISS_SKIP then
+                table.insert(recheckList,ev.key)
+            end
+        end
+        if #recheckList>0 then
+            setFarmStatus("Recheck: "..table.concat(recheckList,", "),C.FlyPurple)
+            resetMissCounts()
+            if ghostRoomPos then tweenToPos(ghostRoomPos, "GhostRoom", 50) end
+            safewait(0.3)
+            for _,key in ipairs(recheckList) do
+                if not _G.BlairHub or not Config.AutoFarm then break end
+                if key=="EMF5" and hasInInventory("EMF Reader") then
+                    equipTool("EMF Reader"); checkEMF(ghostRoomPos,"GhostRoom")
+                elseif key=="WRITING" and hasInInventory("Ghost Writing Book") then
+                    equipTool("Ghost Writing Book"); checkWriting(ghostRoomPos,"GhostRoom")
+                elseif key=="SLS" and hasInInventory("SLS Camera") then
+                    equipTool("SLS Camera"); checkSLS(ghostRoomPos,"GhostRoom")
+                elseif key=="SBOX" and hasInInventory("Spirit Box") then
+                    equipTool("Spirit Box"); checkSBox(ghostRoomPos,"GhostRoom")
+                end
+                if trySubmitAndGoVan(getPossibleGhosts()) then return end
+            end
+        end
+
+        -- STEP 6: Endgame
+        local possible=getPossibleGhosts()
+        local detCount=0
+        for _,v in pairs(detectedEvidence) do if v then detCount=detCount+1 end end
+
+        if trySubmitAndGoVan(possible) then return
+        elseif #possible<=3 and detCount>=2 then
+            local best,score=getBestGuess()
+            if best and score>=2 then
+                setFarmStatus("Best guess: "..best.." ("..score..")",C.Yellow)
+                task.wait(1)
+                submitGuess(best)
+                task.wait(1)
+                goToVan()
+            else
+                setFarmStatus("Ambiguous: "..table.concat(possible,", "),C.Orange)
+                goToVan()
+            end
+        elseif #possible==0 then
+            setFarmStatus("No match — resetting",C.Red); resetEvidence()
+        else
+            setFarmStatus(#possible.." possible — "..detCount.." detected",C.Orange)
+            goToVan()
+        end
+    end)
+
+    AUTO_FARM.running=false
+    if not ok then
+        print("[Blair v7.8] Farm error:",err)
+        setFarmStatus("Farm error: "..tostring(err):sub(1,60),C.Red)
+        if farmBtn and farmBtn.Parent then
+            farmBtn.Text="START AUTO FARM"
+            farmBtn.BackgroundColor3=C.FarmGreen
+        end
+        Config.AutoFarm=false
+    end
+end
+
+-- ============================================================================
+-- ESP
+-- ============================================================================
+local espCache={}
+local IMPORTANT_ITEM_NAMES = {
+    ["SLS Camera"] = true,
+    ["EMF Reader"] = true,
+    ["Spirit Box"] = true,
+    ["Ghost Writing Book"] = true,
+    ["Crucifix"] = true,
+    ["Photo Camera"] = true,
+    ["Salt"] = true,
+    ["The Panda"] = true,
+}
+local CURSED_ITEM_NAMES = {
+    ["Tarot Cards"] = true,
+    ["PulledTarotCard"] = true,
+
+    ["Music Box"] = true,
+    ["MusicBox"] = true,
+
+    ["Spirit Board"] = true,
+    ["SpiritBoard"] = true,
+    ["Ouija Board"] = true,
+    ["OuijaBoard"] = true,
+
+    ["Summoning Circle"] = true,
+    ["SummoningCircle"] = true,
+
+    ["Mirror"] = true,
+    ["Haunted Mirror"] = true,
+    ["HauntedMirror"] = true,
+
+    ["Monkey Paw"] = true,
+    ["MonkeyPaw"] = true,
+
+    ["Voodoo Doll"] = true,
+    ["VoodooDoll"] = true,
+}
+
+-- BooBooDoll riêng — màu tím
+local BOOBOO_NAMES = {
+    ["BooBooDoll"] = true,
+    ["Boo-Boo Doll"] = true,
+    ["BooBoo"] = true,
+}
+
+-- Tools quan trọng — màu xanh lá
+local IMPORTANT_TOOL_NAMES = {
+    ["SLS Camera"] = true,
+    ["EMF Reader"] = true,
+    ["Spirit Box"] = true,
+    ["Ghost Writing Book"] = true,
+    ["Thermometer"] = true,
+    ["Crucifix"] = true,
+    ["Photo Camera"] = true,
+    ["Salt"] = true,
+    ["UV Light"] = true,
+}
+local CURSED_KEYWORDS = {
+    "tarot",
+    "music",
+    "spiritboard",
+    "spirit board",
+    "ouija",
+    "summoningcircle",
+    "summoning circle",
+    "mirror",
+    "hauntedmirror",
+    "haunted mirror",
+    "monkeypaw",
+    "monkey paw",
+    "voodoo",
+    "cursed",
+}
+local function normalizeItemName(name)
+    name = tostring(name or ""):lower()
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    return name
+end
+local function isBooBoo(item)
+    if not item then return false end
+    local n = normalizeItemName(item.Name)
+    for name in pairs(BOOBOO_NAMES) do
+        if n == normalizeItemName(name) then return true end
+    end
+    return false
+end
+
+local function isImportantTool(item)
+    if not item then return false end
+    local n = normalizeItemName(item.Name)
+    for name in pairs(IMPORTANT_TOOL_NAMES) do
+        if n == normalizeItemName(name) then return true end
+    end
+    return false
+end
+
+local function isImportantItem(item)
+    return isImportantTool(item) or isBooBoo(item)
+end
+
+local function isCursedItem(item)
+    if not item then
+        return false
+    end
+
+    local n = normalizeItemName(item.Name)
+
+    for itemName in pairs(CURSED_ITEM_NAMES) do
+        if n == normalizeItemName(itemName) then
+            return true
+        end
+    end
+
+    for _,keyword in ipairs(CURSED_KEYWORDS) do
+        if n:find(keyword, 1, true) then
+            return true
+        end
+    end
+
+    local parent = item
+    while parent do
+        local parentName = normalizeItemName(parent.Name)
+
+        if parentName == "cursedspawns" then
+            return true
+        end
+
+        for _,keyword in ipairs(CURSED_KEYWORDS) do
+            if parentName:find(keyword, 1, true) then
+                return true
+            end
+        end
+
+        parent = parent.Parent
+    end
+
+    return false
+end
+local function shouldESPItem(item)
+    return isImportantItem(item) or isCursedItem(item)
+end
+local function getItemESPColor(item)
+    if isBooBoo(item) then
+        return C.FlyPurple  -- màu tím
+    end
+    if isCursedItem(item) then
+        return C.Red        -- màu đỏ
+    end
+    if isImportantTool(item) then
+        return C.ItemGreen  -- màu xanh lá
+    end
+    return C.ItemGreen
+end
+
+local function getItemESPLabel(item)
+    if isBooBoo(item) then
+        return "[BOO-BOO] " .. item.Name
+    end
+    if isCursedItem(item) then
+        local n = tostring(item.Name or "")
+
+        if n == "SpiritBoard" then n = "Spirit Board" end
+        if n == "SummoningCircle" then n = "Summoning Circle" end
+        if n == "MusicBox" then n = "Music Box" end
+        if n == "HauntedMirror" then n = "Haunted Mirror" end
+        if n == "MonkeyPaw" then n = "Monkey Paw" end
+        if n == "VoodooDoll" then n = "Voodoo Doll" end
+        if n == "" then n = "Cursed Object" end
+
+        return "[CURSED] " .. n
+    end
+    return item.Name
+end
+local function addESP(model,color,label)
+    if espCache[model] or not model or not model.Parent then return end
+    local visuals={}
+    pcall(function()
+        local anchor=model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Handle") or model:FindFirstChildWhichIsA("BasePart")
+        if anchor then
+            local sb=Instance.new("SelectionBox")
+            sb.Color3=color; sb.LineThickness=0.05
+            sb.SurfaceTransparency=0.85; sb.SurfaceColor3=color
+            sb.Adornee=anchor; sb.Parent=lp:WaitForChild("PlayerGui")
+            table.insert(visuals,sb)
+
+            local bb=Instance.new("BillboardGui")
+            bb.AlwaysOnTop=true; bb.Size=UDim2.new(0,180,0,32)
+            bb.StudsOffset=Vector3.new(0,3,0); bb.Adornee=anchor; bb.Parent=lp:WaitForChild("PlayerGui")
+            local lbl=Instance.new("TextLabel",bb)
+            lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
+            lbl.Text=label; lbl.TextColor3=color; lbl.TextSize=13
+            lbl.Font=Enum.Font.GothamBold; lbl.TextStrokeTransparency=0
+            table.insert(visuals,bb)
+        end
+    end)
+    espCache[model]=visuals
+end
+local function removeESP(model)
+    if not espCache[model] then return end
+    for _,v in ipairs(espCache[model]) do pcall(function() v:Destroy() end) end
+    espCache[model]=nil
+end
+local function clearAllESP()
+    for model in pairs(espCache) do removeESP(model) end
+end
+
+local ghostESP = { model=nil, highlight=nil, bb=nil, label=nil }
+local function clearGhostESP()
+    if ghostESP.highlight then pcall(function() ghostESP.highlight:Destroy() end) end
+    if ghostESP.bb then pcall(function() ghostESP.bb:Destroy() end) end
+    ghostESP.model=nil; ghostESP.highlight=nil; ghostESP.bb=nil; ghostESP.label=nil
+end
+local function updateGhostESP(ghost)
+    if not Config.GhostESP or not ghost then
+        if ghostESP.model then clearGhostESP() end
+        return
+    end
+    if ghostESP.model ~= ghost or not ghostESP.highlight then
+        clearGhostESP()
+        ghostESP.model = ghost
+        pcall(function()
+            local hl = Instance.new("Highlight")
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.FillTransparency = 0.6
+            hl.OutlineTransparency = 0
+            hl.Adornee = ghost
+            hl.Parent = lp:WaitForChild("PlayerGui")
+            ghostESP.highlight = hl
+            local anchor = ghost:FindFirstChild("HumanoidRootPart") or ghost:FindFirstChildWhichIsA("BasePart")
+            if anchor then
+                local bb = Instance.new("BillboardGui")
+                bb.AlwaysOnTop = true; bb.Size = UDim2.new(0,200,0,30)
+                bb.StudsOffset = Vector3.new(0,4,0); bb.Adornee = anchor
+                bb.Parent = lp:WaitForChild("PlayerGui")
+                local lbl = Instance.new("TextLabel", bb)
+                lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1
+                lbl.TextSize = 14; lbl.Font = Enum.Font.GothamBold
+                lbl.TextStrokeTransparency = 0
+                ghostESP.bb = bb; ghostESP.label = lbl
+            end
+        end)
+    end
+    pcall(function()
+        local hv = ghost:FindFirstChild("Hunting")
+        local hunting = hv and hv.Value == true
+        local col = hunting and C.GhostHunt or C.GhostNormal
+        if ghostESP.highlight then
+            ghostESP.highlight.FillColor = col
+            ghostESP.highlight.OutlineColor = col
+        end
+        if ghostESP.label then
+            local anchor = ghost:FindFirstChild("HumanoidRootPart") or ghost:FindFirstChildWhichIsA("BasePart")
+            local dist = 0
+            local cam = workspace.CurrentCamera
+            if anchor and cam then dist = (cam.CFrame.Position - anchor.Position).Magnitude end
+            ghostESP.label.Text = hunting
+                and string.format("GHOST [%dm] - HUNTING", math.floor(dist))
+                or  string.format("GHOST [%dm]", math.floor(dist))
+            ghostESP.label.TextColor3 = col
+        end
+    end)
+end
+
+local function cleanESPCache()
+    for model in pairs(espCache) do
+        if not model or not model.Parent then
+            removeESP(model)
+        elseif model ~= findGhost() then
+            if not shouldESPItem(model) and model.Parent ~= getItems() then
+                removeESP(model)
+            end
+        end
+    end
+end
+
+local origLight={
+    Ambient=Lighting.Ambient,OutdoorAmbient=Lighting.OutdoorAmbient,
+    Brightness=Lighting.Brightness,ClockTime=Lighting.ClockTime,FogEnd=Lighting.FogEnd,
+}
+local function applyFullBright()
+    Lighting.Ambient=Color3.new(1,1,1); Lighting.OutdoorAmbient=Color3.new(1,1,1)
+    Lighting.Brightness=3; Lighting.ClockTime=14; Lighting.FogEnd=999999
+    for _,e in ipairs(Lighting:GetChildren()) do
+        if e:IsA("Atmosphere") or e:IsA("BlurEffect") or e:IsA("DepthOfFieldEffect") then
+            pcall(function() e.Enabled=false end)
+        end
+    end
+end
+local function restoreLight()
+    for k,v in pairs(origLight) do pcall(function() Lighting[k]=v end) end
+    for _,e in ipairs(Lighting:GetChildren()) do pcall(function() e.Enabled=true end) end
+end
+
+
+-- ============================================================================
+-- [v8.3] Fly — BodyVelocity theo huong camera + HRP hook chong PlayerController keo ve
+-- ============================================================================
+local fly = { conn = nil, bv = nil, bg = nil, speed = 40 }
+local _flyHookActive = false
+local _hrpHooked = false
+local disableGhostMode -- forward
+local disableFly -- forward
+
+local function hookHRP()
+    if _hrpHooked then return end
+    local char = getChar()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function()
+        local mt = getrawmetatable(hrp)
+        local old_ni = mt.__newindex
+        setreadonly(mt, false)
+        mt.__newindex = newcclosure(function(self, key, value)
+            if (key == "CFrame" or key == "Position") and _flyHookActive then
+                local src = debug.info(2, "s") or ""
+                if src:find("PlayerController") or src:find("DoorCollisions") then
+                    return -- block server/other-script reset khi dang fly
+                end
+            end
+            return old_ni(self, key, value)
+        end)
+        setreadonly(mt, true)
+        _hrpHooked = true
+        print("[Hook] HRP __newindex hooked")
+    end)
+end
+
+local function ensureHRPHook()
+    local char = getChar()
+    if not char then return end
+    if not char:FindFirstChild("HumanoidRootPart") then return end
+    hookHRP()
+end
+ensureHRPHook()
+lp.CharacterAdded:Connect(function()
+    _hrpHooked = false
+    task.wait(0.5)
+    ensureHRPHook()
+end)
+
+local function enableFly()
+    if fly.conn then return end
+    pcall(function()
+        if Config.GhostMode then Config.GhostMode = false; pcall(disableGhostMode) end
+        local char = getChar(); if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then return end
+        ensureHRPHook()
+        hum.PlatformStand = true
+        hum.AutoRotate = false
+        hum.WalkSpeed = 0
+        hum.JumpPower = 0
+        _flyHookActive = true
+        local oldBV = hrp:FindFirstChildOfClass("BodyVelocity")
+        local oldBG = hrp:FindFirstChildOfClass("BodyGyro")
+        if oldBV then oldBV:Destroy() end
+        if oldBG then oldBG:Destroy() end
+        local bv = Instance.new("BodyVelocity")
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.P = 5e3
+        bv.Parent = hrp
+        fly.bv = bv
+        local bg = Instance.new("BodyGyro")
+        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+        bg.P = 1e4
+        bg.D = 100
+        bg.CFrame = hrp.CFrame
+        bg.Parent = hrp
+        fly.bg = bg
+        fly.conn = RunService.Heartbeat:Connect(function()
+            if not Config.FlyMode or not _G.BlairHub then disableFly(); return end
+            pcall(function()
+                local charNow = getChar(); if not charNow then return end
+                local hrpNow = charNow:FindFirstChild("HumanoidRootPart")
+                local bvNow = hrpNow and hrpNow:FindFirstChildOfClass("BodyVelocity")
+                local bgNow = hrpNow and hrpNow:FindFirstChildOfClass("BodyGyro")
+                local cam = workspace.CurrentCamera
+                if not hrpNow or not bvNow or not cam then return end
+                local move = Vector3.zero
+                local spd = fly.speed
+                if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then spd = spd * 2 end
+                local camCF = cam.CFrame
+                if UIS:IsKeyDown(Enum.KeyCode.W) then move += camCF.LookVector end
+                if UIS:IsKeyDown(Enum.KeyCode.S) then move -= camCF.LookVector end
+                if UIS:IsKeyDown(Enum.KeyCode.A) then move -= camCF.RightVector end
+                if UIS:IsKeyDown(Enum.KeyCode.D) then move += camCF.RightVector end
+                if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0,1,0) end
+                if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move -= Vector3.new(0,1,0) end
+                if move.Magnitude > 0 then bvNow.Velocity = move.Unit * spd else bvNow.Velocity = Vector3.zero end
+                if bgNow then bgNow.CFrame = hrpNow.CFrame end
+            end)
+        end)
+    end)
+end
+
+disableFly = function()
+    pcall(function()
+        _flyHookActive = false
+        if fly.conn then fly.conn:Disconnect(); fly.conn=nil end
+        if fly.bv then fly.bv:Destroy(); fly.bv=nil end
+        if fly.bg then fly.bg:Destroy(); fly.bg=nil end
+        local char = getChar()
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local bv = hrp:FindFirstChildOfClass("BodyVelocity"); if bv then bv:Destroy() end
+            local bg = hrp:FindFirstChildOfClass("BodyGyro"); if bg then bg:Destroy() end
+        end
+        if hum then
+            hum.PlatformStand = false
+            hum.AutoRotate = true
+            hum.WalkSpeed = 16
+            hum.JumpPower = 50
+            task.wait(0.05)
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+end
+
+task.spawn(function()
+    local wasHunting=false
+    while _G.BlairHub do
+        if Config.AutoHide then pcall(function()
+            local hunting=isHunting()
+            if hunting and not wasHunting then
+                local Map=getMap()
+                local hrp=getChar() and getChar():FindFirstChild("HumanoidRootPart")
+                if Map and hrp then
+                    local best,bestDist=nil,math.huge
+                    local ClosetDoors=Map:FindFirstChild("ClosetDoors")
+                    if ClosetDoors then
+                        for _,closet in ipairs(ClosetDoors:GetChildren()) do
+                            local main=closet:FindFirstChild("Main")
+                            if main and main:IsA("BasePart") then
+                                local d=(hrp.Position-main.Position).Magnitude
+                                if d<bestDist then bestDist=d; best=main end
+                            end
+                        end
+                    end
+                    -- Tween ra ngoài nhà thay vì vào tủ
+                    local outsidePos=getOutsidePos()
+                    moveToPos(outsidePos,"outside-hide")
+                end
+            end
+            wasHunting=hunting
+        end) end
+        task.wait(0.3)
+    end
+end)
+
+-- ============================================================================
+-- UI
+-- ============================================================================
+local sg=Instance.new("ScreenGui")
+sg.Name="BlairHubUI"; sg.ResetOnSpawn=false
+sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+sg.Parent=lp:WaitForChild("PlayerGui")
+
+local HuntBanner=Instance.new("Frame",sg)
+HuntBanner.Size=UDim2.new(1,0,0,52); HuntBanner.BackgroundColor3=C.Red
+HuntBanner.BorderSizePixel=0; HuntBanner.Visible=false; HuntBanner.ZIndex=100
+_G.BlairHuntAlert=HuntBanner
+local HuntL=Instance.new("TextLabel",HuntBanner)
+HuntL.Size=UDim2.new(1,0,1,0); HuntL.BackgroundTransparency=1
+HuntL.Text="!!  GHOST HUNTING  —  FLEE OUTSIDE  !!"
+HuntL.TextColor3=Color3.new(1,1,1); HuntL.TextSize=20
+HuntL.Font=Enum.Font.GothamBold; HuntL.ZIndex=101
+
+task.spawn(function()
+    while _G.BlairHub do
+        if HuntBanner.Visible then
+            TweenService:Create(HuntBanner,TweenInfo.new(0.22),{BackgroundColor3=C.HuntRed}):Play()
+            task.wait(0.22)
+            TweenService:Create(HuntBanner,TweenInfo.new(0.22),{BackgroundColor3=C.HuntDark}):Play()
+            task.wait(0.22)
+        else task.wait(0.5) end
+    end
+end)
+
+local WIN_W=318
+local vpY=workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 760
+local WIN_H=math.min(700,vpY-40)
+local Win=Instance.new("Frame",sg)
+Win.Name="Main"; Win.Size=UDim2.new(0,WIN_W,0,WIN_H)
+Win.Position=UDim2.new(1,-WIN_W-16,0.5,-WIN_H/2)
+Win.BackgroundColor3=C.BG; Win.BorderSizePixel=0
+Win.Active=true; Win.Draggable=true
+Instance.new("UICorner",Win).CornerRadius=UDim.new(0,12)
+local winStroke=Instance.new("UIStroke",Win)
+winStroke.Color=C.Stroke; winStroke.Thickness=1.5
+
+local TB=Instance.new("Frame",Win)
+TB.Size=UDim2.new(1,0,0,46); TB.BackgroundColor3=C.BG2; TB.BorderSizePixel=0
+Instance.new("UICorner",TB).CornerRadius=UDim.new(0,12)
+local tbFix=Instance.new("Frame",TB)
+tbFix.Size=UDim2.new(1,0,0,12); tbFix.Position=UDim2.new(0,0,1,-12)
+tbFix.BackgroundColor3=C.BG2; tbFix.BorderSizePixel=0
+
+local TitleL=Instance.new("TextLabel",TB)
+TitleL.Size=UDim2.new(1,-54,0,22); TitleL.Position=UDim2.new(0,14,0,6)
+TitleL.BackgroundTransparency=1; TitleL.Text="BLAIR HUB  v7.8"
+TitleL.TextColor3=C.Purple; TitleL.TextSize=14
+TitleL.Font=Enum.Font.GothamBold; TitleL.TextXAlignment=Enum.TextXAlignment.Left
+
+local SubL=Instance.new("TextLabel",TB)
+SubL.Size=UDim2.new(1,-54,0,14); SubL.Position=UDim2.new(0,14,0,28)
+SubL.BackgroundTransparency=1
+SubL.Text="ESP fix · quest tracker · team sanity"
+SubL.TextColor3=C.HeaderText; SubL.TextSize=9
+SubL.Font=Enum.Font.Gotham; SubL.TextXAlignment=Enum.TextXAlignment.Left
+
+local function makeUnload()
+    _G.BlairHub=false; Config.AutoFarm=false; sboxToken={}
+    clearDetectionConns(); restoreLight(); clearAllESP(); pcall(clearGhostESP)
+    pcall(disableFly)
+    Config.GhostMode=false; Config.FlyMode=false; pcall(disableGhostMode)
+    pcall(function()
+        local hum=getChar() and getChar():FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed=16 end
+    end)
+    sg:Destroy()
+end
+
+local CloseBtn=Instance.new("TextButton",TB)
+CloseBtn.Size=UDim2.new(0,26,0,26); CloseBtn.Position=UDim2.new(1,-36,0.5,-13)
+CloseBtn.BackgroundColor3=Color3.fromRGB(170,35,35); CloseBtn.Text="x"
+CloseBtn.TextColor3=Color3.new(1,1,1); CloseBtn.TextSize=12
+CloseBtn.Font=Enum.Font.GothamBold; CloseBtn.BorderSizePixel=0
+Instance.new("UICorner",CloseBtn).CornerRadius=UDim.new(0,6)
+CloseBtn.MouseButton1Click:Connect(makeUnload)
+
+local gcam = {
+    speed = 20,
+    renderConn = nil,
+    inputConn = nil,
+    yaw = 0,
+    pitch = 0,
+    pos = Vector3.zero,
+    active = false,
+    cam = nil,
+    -- saved camera/player state
+    savedType = nil,
+    savedSubject = nil,
+    savedFOV = nil,
+    savedCamMode = nil,
+    savedPlayerMin = nil,
+    savedPlayerMax = nil,
+    -- saved character state for safe restore
+    savedHRPCF = nil,
+    savedAutoRotate = nil,
+    -- disabled game camera scripts
+    disabledScripts = {},
+}
+
+-- Disable game camera LocalScripts so they don't fight us each frame
+local CAM_SCRIPT_NAMES = {
+    ["Camera(Keep)"]      = true,
+    ["Old_Camera(Keep)"]  = true,
+    ["CameraLookVector"]  = true,
+    ["CameraTransparency"]= true,
+}
+local function disableGameCameraScripts()
+    gcam.disabledScripts = {}
+    local function scan(container)
+        if not container then return end
+        for _, d in ipairs(container:GetDescendants()) do
+            if d:IsA("LocalScript") and CAM_SCRIPT_NAMES[d.Name] and not d.Disabled then
+                d.Disabled = true
+                table.insert(gcam.disabledScripts, d)
+            end
+        end
+    end
+    pcall(function() scan(getChar()) end)
+    pcall(function() scan(lp:FindFirstChild("PlayerScripts")) end)
+    pcall(function() scan(lp:FindFirstChild("PlayerGui")) end)
+end
+local function restoreGameCameraScripts()
+    for _, d in ipairs(gcam.disabledScripts) do
+        pcall(function() if d and d.Parent then d.Disabled = false end end)
+    end
+    gcam.disabledScripts = {}
+end
+
+local function enableGhostMode()
+    pcall(function()
+        if Config.FlyMode then Config.FlyMode = false; pcall(disableFly) end
+        local char = getChar()
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        -- Luu trang thai goc de khoi phuc
+        gcam.savedHRPCF      = hrp.CFrame
+        gcam.savedAutoRotate = hum and hum.AutoRotate
+
+        -- Hard-lock nhan vat tai cho (khong move theo cam)
+        if hum then
+            hum.PlatformStand = true
+            hum.AutoRotate    = false
+        end
+        hrp.Anchored = true
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        if char then
+            for _, v in ipairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then v.LocalTransparencyModifier = 1 end
+            end
+        end
+
+        -- Tat script camera cua game
+        disableGameCameraScripts()
+
+        -- Quan trong: thoat khoi LockFirstPerson neu game ep
+        gcam.savedCamMode = lp.CameraMode
+        pcall(function() lp.CameraMode = Enum.CameraMode.Classic end)
+        gcam.savedPlayerMin = lp.CameraMinZoomDistance
+        gcam.savedPlayerMax = lp.CameraMaxZoomDistance
+        pcall(function()
+            lp.CameraMinZoomDistance = 0.5
+            lp.CameraMaxZoomDistance = 1024
+        end)
+
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        gcam.cam          = cam
+        gcam.savedType    = cam.CameraType
+        gcam.savedSubject = cam.CameraSubject
+        gcam.savedFOV     = cam.FieldOfView
+
+        local camCF = cam.CFrame
+        gcam.pos = camCF.Position
+        local lookFlat = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+        if lookFlat.Magnitude < 1e-4 then lookFlat = Vector3.new(0,0,-1) end
+        gcam.yaw   = math.atan2(-lookFlat.X, -lookFlat.Z)
+        gcam.pitch = math.asin(math.clamp(camCF.LookVector.Y, -1, 1))
+
+        cam.CameraType    = Enum.CameraType.Scriptable
+        cam.CameraSubject = nil
+        UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+        gcam.active = true
+
+        -- Mouse look: chi update goc, RenderStepped lo set CFrame
+        gcam.inputConn = UIS.InputChanged:Connect(function(input)
+            if not gcam.active then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement then
+                local sens = 0.003
+                gcam.yaw   = gcam.yaw   - input.Delta.X * sens
+                gcam.pitch = math.clamp(gcam.pitch - input.Delta.Y * sens, -math.pi/2 + 0.05, math.pi/2 - 0.05)
+            end
+        end)
+
+        -- Dung RenderStepped (chay SAU moi BindToRenderStep, ke ca cua game)
+        if gcam.renderConn then gcam.renderConn:Disconnect() end
+        gcam.renderConn = RunService.RenderStepped:Connect(function(dt)
+            if not gcam.active then return end
+            local c = workspace.CurrentCamera
+            if not c then return end
+
+            -- bam vao camera moi neu game switch
+            if gcam.cam ~= c then
+                gcam.cam = c
+                pcall(function()
+                    gcam.savedType    = c.CameraType
+                    gcam.savedSubject = c.CameraSubject
+                    gcam.savedFOV     = c.FieldOfView
+                end)
+            end
+
+            -- ep moi frame phong khi game keo lai
+            if c.CameraType ~= Enum.CameraType.Scriptable then c.CameraType = Enum.CameraType.Scriptable end
+            if c.CameraSubject ~= nil then c.CameraSubject = nil end
+            if lp.CameraMode ~= Enum.CameraMode.Classic then
+                pcall(function() lp.CameraMode = Enum.CameraMode.Classic end)
+            end
+
+            -- giu nhan vat dung im
+            local charNow = getChar()
+            local hrpNow  = charNow and charNow:FindFirstChild("HumanoidRootPart")
+            if hrpNow and gcam.savedHRPCF then
+                if not hrpNow.Anchored then hrpNow.Anchored = true end
+                hrpNow.AssemblyLinearVelocity  = Vector3.zero
+                hrpNow.AssemblyAngularVelocity = Vector3.zero
+                local p = hrpNow.Position
+                local op = gcam.savedHRPCF.Position
+                if (p - op).Magnitude > 0.5 then
+                    hrpNow.CFrame = gcam.savedHRPCF
+                end
+            end
+
+            -- WASD
+            local move = Vector3.zero
+            local spd  = gcam.speed * dt * 60
+            if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then spd = spd * 3 end
+            local rotCF = CFrame.new(gcam.pos) * CFrame.Angles(0, gcam.yaw, 0) * CFrame.Angles(gcam.pitch, 0, 0)
+            if UIS:IsKeyDown(Enum.KeyCode.W)           then move = move + rotCF.LookVector  end
+            if UIS:IsKeyDown(Enum.KeyCode.S)           then move = move - rotCF.LookVector  end
+            if UIS:IsKeyDown(Enum.KeyCode.A)           then move = move - rotCF.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.D)           then move = move + rotCF.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.Space)       then move = move + Vector3.new(0,1,0) end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
+            if move.Magnitude > 0 then
+                gcam.pos = gcam.pos + move.Unit * (spd * dt)
+            end
+            c.CFrame = CFrame.new(gcam.pos) * CFrame.Angles(0, gcam.yaw, 0) * CFrame.Angles(gcam.pitch, 0, 0)
+        end)
+
+        setFarmStatus("Ghost Mode ON - WASD + mouse - G de TP den day", C.FlyPurple)
+    end)
+end
+
+disableGhostMode = function()
+    pcall(function()
+        gcam.active = false
+        if gcam.renderConn then gcam.renderConn:Disconnect(); gcam.renderConn = nil end
+        if gcam.inputConn  then gcam.inputConn:Disconnect();  gcam.inputConn  = nil end
+        UIS.MouseBehavior = Enum.MouseBehavior.Default
+
+        local char = getChar()
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+
+        -- TP an toan: chi TP toi vi tri cam neu raycast tim duoc san hop le
+        local landed = false
+        if hrp then
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            rp.FilterDescendantsInstances = {char}
+            rp.IgnoreWater = true
+            local hit = workspace:Raycast(gcam.pos + Vector3.new(0, 5, 0), Vector3.new(0, -50, 0), rp)
+            if hit then
+                hrp.Anchored = false
+                hrp.CFrame = CFrame.new(hit.Position + Vector3.new(0, 3, 0))
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                landed = true
+            else
+                -- khong co san -> tra ve vi tri ban dau
+                hrp.Anchored = false
+                if gcam.savedHRPCF then
+                    hrp.CFrame = gcam.savedHRPCF
+                end
+                hrp.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+
+        if hum then
+            hum.PlatformStand = false
+            if gcam.savedAutoRotate ~= nil then hum.AutoRotate = gcam.savedAutoRotate end
+        end
+        if char then
+            for _, v in ipairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then v.LocalTransparencyModifier = 0 end
+            end
+        end
+
+        -- Khoi phuc camera + player
+        local c = workspace.CurrentCamera
+        if c then
+            c.CameraType    = gcam.savedType    or Enum.CameraType.Custom
+            c.CameraSubject = gcam.savedSubject or hum
+            if gcam.savedFOV then c.FieldOfView = gcam.savedFOV end
+        end
+        pcall(function()
+            if gcam.savedCamMode  then lp.CameraMode           = gcam.savedCamMode  end
+            if gcam.savedPlayerMin then lp.CameraMinZoomDistance = gcam.savedPlayerMin end
+            if gcam.savedPlayerMax then lp.CameraMaxZoomDistance = gcam.savedPlayerMax end
+        end)
+        gcam.cam = nil
+
+        restoreGameCameraScripts()
+        setFarmStatus(landed and "Ghost Mode OFF - TP den vi tri camera"
+                              or  "Ghost Mode OFF - khong co san, giu vi tri cu", C.Green)
+    end)
+end
+
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe or not _G.BlairHub then return end
+    if input.KeyCode == KEYBINDS.Fly then
+        Config.FlyMode = not Config.FlyMode
+        if Config.FlyMode then enableFly() else disableFly() end
+    elseif input.KeyCode == KEYBINDS.Ghost then
+        Config.GhostMode = not Config.GhostMode
+        if Config.GhostMode then enableGhostMode() else disableGhostMode() end
+    end
+end)
+
+
+local Scroll=Instance.new("ScrollingFrame",Win)
+Scroll.Size=UDim2.new(1,-8,1,-52); Scroll.Position=UDim2.new(0,4,0,48)
+Scroll.BackgroundTransparency=1; Scroll.BorderSizePixel=0
+Scroll.ScrollBarThickness=3; Scroll.ScrollBarImageColor3=C.AccentDim
+Scroll.CanvasSize=UDim2.new(0,0,0,0); Scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+
+local Content=Instance.new("Frame",Scroll)
+Content.Size=UDim2.new(1,0,0,0); Content.AutomaticSize=Enum.AutomaticSize.Y
+Content.BackgroundTransparency=1
+local CL=Instance.new("UIListLayout",Content)
+CL.SortOrder=Enum.SortOrder.LayoutOrder; CL.Padding=UDim.new(0,4)
+Instance.new("UIPadding",Content).PaddingBottom=UDim.new(0,10)
+
+local function sectionLabel(text,order)
+    local F=Instance.new("Frame",Content)
+    F.Size=UDim2.new(1,0,0,20); F.BackgroundTransparency=1; F.LayoutOrder=order
+    local L=Instance.new("TextLabel",F)
+    L.Size=UDim2.new(1,-10,1,0); L.Position=UDim2.new(0,8,0,0)
+    L.BackgroundTransparency=1; L.Text=text; L.TextColor3=C.HeaderText
+    L.TextSize=9; L.Font=Enum.Font.GothamBold; L.TextXAlignment=Enum.TextXAlignment.Left
+    local line=Instance.new("Frame",F)
+    line.Size=UDim2.new(1,-10,0,1); line.Position=UDim2.new(0,5,1,-1)
+    line.BackgroundColor3=C.SectionLine; line.BorderSizePixel=0
+end
+
+local function makeToggle(label,sub,configKey,order,cb,ac)
+    ac=ac or C.Accent
+    local Row=Instance.new("Frame",Content)
+    Row.Size=UDim2.new(1,0,0,46); Row.BackgroundColor3=C.Card
+    Row.BorderSizePixel=0; Row.LayoutOrder=order
+    Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
+    local NL=Instance.new("TextLabel",Row)
+    NL.Size=UDim2.new(1,-80,0,16); NL.Position=UDim2.new(0,12,0,7)
+    NL.BackgroundTransparency=1; NL.Text=label; NL.TextColor3=C.Text
+    NL.TextSize=12; NL.Font=Enum.Font.GothamBold; NL.TextXAlignment=Enum.TextXAlignment.Left
+    local SL=Instance.new("TextLabel",Row)
+    SL.Size=UDim2.new(1,-80,0,12); SL.Position=UDim2.new(0,12,0,27)
+    SL.BackgroundTransparency=1; SL.Text=sub.."  |  off"
+    SL.TextColor3=C.TextMuted; SL.TextSize=10
+    SL.Font=Enum.Font.Gotham; SL.TextXAlignment=Enum.TextXAlignment.Left
+    local TBg=Instance.new("Frame",Row)
+    TBg.Size=UDim2.new(0,42,0,22); TBg.Position=UDim2.new(1,-50,0.5,-11)
+    TBg.BackgroundColor3=C.AccentDim; TBg.BorderSizePixel=0
+    Instance.new("UICorner",TBg).CornerRadius=UDim.new(1,0)
+    local TK=Instance.new("Frame",TBg)
+    TK.Size=UDim2.new(0,16,0,16); TK.Position=UDim2.new(0,3,0.5,-8)
+    TK.BackgroundColor3=Color3.new(1,1,1); TK.BorderSizePixel=0
+    Instance.new("UICorner",TK).CornerRadius=UDim.new(1,0)
+    local Btn=Instance.new("TextButton",TBg)
+    Btn.Size=UDim2.new(1,0,1,0); Btn.BackgroundTransparency=1; Btn.Text=""
+    Btn.MouseButton1Click:Connect(function()
+        Config[configKey]=not Config[configKey]
+        local on=Config[configKey]
+        TweenService:Create(TBg,TweenInfo.new(0.15),{BackgroundColor3=on and ac or C.AccentDim}):Play()
+        TweenService:Create(TK,TweenInfo.new(0.15),{
+            Position=on and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)
+        }):Play()
+        SL.Text=sub..(on and "  |  on" or "  |  off")
+        SL.TextColor3=on and ac or C.TextMuted
+        if cb then cb(on) end
+    end)
+end
+
+local function makeButton(label,sub,order,color,cb)
+    local Row=Instance.new("Frame",Content)
+    Row.Size=UDim2.new(1,0,0,46); Row.BackgroundColor3=C.Card
+    Row.BorderSizePixel=0; Row.LayoutOrder=order
+    Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
+    local NL=Instance.new("TextLabel",Row)
+    NL.Size=UDim2.new(1,-90,0,16); NL.Position=UDim2.new(0,12,0,7)
+    NL.BackgroundTransparency=1; NL.Text=label; NL.TextColor3=C.Text
+    NL.TextSize=12; NL.Font=Enum.Font.GothamBold; NL.TextXAlignment=Enum.TextXAlignment.Left
+    local SL=Instance.new("TextLabel",Row)
+    SL.Size=UDim2.new(1,-90,0,12); SL.Position=UDim2.new(0,12,0,27)
+    SL.BackgroundTransparency=1; SL.Text=sub; SL.TextColor3=C.TextMuted
+    SL.TextSize=10; SL.Font=Enum.Font.Gotham; SL.TextXAlignment=Enum.TextXAlignment.Left
+    local Btn=Instance.new("TextButton",Row)
+    Btn.Size=UDim2.new(0,70,0,26); Btn.Position=UDim2.new(1,-76,0.5,-13)
+    Btn.BackgroundColor3=color or C.AccentDim; Btn.Text="USE"
+    Btn.TextColor3=Color3.new(1,1,1); Btn.TextSize=10
+    Btn.Font=Enum.Font.GothamBold; Btn.BorderSizePixel=0
+    Instance.new("UICorner",Btn).CornerRadius=UDim.new(0,5)
+    Btn.MouseButton1Click:Connect(function()
+        TweenService:Create(Btn,TweenInfo.new(0.1),{BackgroundColor3=Color3.new(1,1,1)}):Play()
+        task.delay(0.15,function()
+            if Btn and Btn.Parent then
+                TweenService:Create(Btn,TweenInfo.new(0.2),{BackgroundColor3=color or C.AccentDim}):Play()
+            end
+        end)
+        if cb then cb() end
+    end)
+end
+
+sectionLabel("  AUTO FARM",1)
+local FarmCard=Instance.new("Frame",Content)
+FarmCard.Size=UDim2.new(1,0,0,80); FarmCard.BackgroundColor3=Color3.fromRGB(10,22,10)
+FarmCard.BorderSizePixel=0; FarmCard.LayoutOrder=2
+Instance.new("UICorner",FarmCard).CornerRadius=UDim.new(0,10)
+do local s=Instance.new("UIStroke",FarmCard); s.Color=Color3.fromRGB(25,80,25); s.Thickness=1.5 end
+farmBtn=Instance.new("TextButton",FarmCard)
+farmBtn.Size=UDim2.new(1,-16,0,34); farmBtn.Position=UDim2.new(0,8,0,8)
+farmBtn.BackgroundColor3=C.FarmGreen; farmBtn.Text="START AUTO FARM"
+farmBtn.TextColor3=Color3.new(1,1,1); farmBtn.TextSize=13
+farmBtn.Font=Enum.Font.GothamBold; farmBtn.BorderSizePixel=0
+Instance.new("UICorner",farmBtn).CornerRadius=UDim.new(0,8)
+farmStatusLbl=Instance.new("TextLabel",FarmCard)
+farmStatusLbl.Size=UDim2.new(1,-16,0,22); farmStatusLbl.Position=UDim2.new(0,8,0,50)
+farmStatusLbl.BackgroundTransparency=1; farmStatusLbl.Text="idle"
+farmStatusLbl.TextColor3=Color3.fromRGB(70,130,70); farmStatusLbl.TextSize=10
+farmStatusLbl.Font=Enum.Font.GothamBold; farmStatusLbl.TextXAlignment=Enum.TextXAlignment.Left
+farmBtn.MouseButton1Click:Connect(function()
+    Config.AutoFarm=not Config.AutoFarm
+    if Config.AutoFarm then
+        farmBtn.Text="STOP AUTO FARM"; farmBtn.BackgroundColor3=C.FarmRed
+        task.spawn(function()
+            runAutoFarm()
+            if farmBtn and farmBtn.Parent then
+                farmBtn.Text="START AUTO FARM"
+                farmBtn.BackgroundColor3=C.FarmGreen
+            end
+            Config.AutoFarm=false
+        end)
+    else
+        farmBtn.Text="START AUTO FARM"; farmBtn.BackgroundColor3=C.FarmGreen
+        sboxToken={}; AUTO_FARM.running=false
+        setFarmStatus("stopped",Color3.fromRGB(150,150,150))
+    end
+end)
+
+sectionLabel("  HACKS",5)
+makeToggle("Auto Hide",       "TP outside on hunt",   "AutoHide",       11)
+makeToggle("Fly Mode",        "WASD + Space/Ctrl, hotkey F", "FlyMode",        9,
+    function(on) if on then enableFly() else disableFly() end end, C.FlyBlue)
+makeToggle("Speed Hack",      "set walk speed",            "SpeedHack",      12,
+    function(on)
+        if not on then pcall(function()
+            local hum=getChar() and getChar():FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed=16 end
+        end) end
+    end)
+do
+    local Row=Instance.new("Frame",Content)
+    Row.Size=UDim2.new(1,0,0,48); Row.BackgroundColor3=C.Card
+    Row.BorderSizePixel=0; Row.LayoutOrder=13
+    Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
+    local TL=Instance.new("TextLabel",Row)
+    TL.Size=UDim2.new(1,-16,0,18); TL.Position=UDim2.new(0,12,0,6)
+    TL.BackgroundTransparency=1; TL.Text="walk speed: "..Config.SpeedValue
+    TL.TextColor3=C.TextDim; TL.TextSize=11; TL.Font=Enum.Font.GothamBold
+    TL.TextXAlignment=Enum.TextXAlignment.Left
+    local SBg=Instance.new("Frame",Row)
+    SBg.Size=UDim2.new(1,-22,0,5); SBg.Position=UDim2.new(0,11,0,32)
+    SBg.BackgroundColor3=C.AccentDim; SBg.BorderSizePixel=0
+    Instance.new("UICorner",SBg).CornerRadius=UDim.new(1,0)
+    local SFill=Instance.new("Frame",SBg)
+    SFill.Size=UDim2.new((Config.SpeedValue-16)/84,0,1,0)
+    SFill.BackgroundColor3=C.Accent; SFill.BorderSizePixel=0
+    Instance.new("UICorner",SFill).CornerRadius=UDim.new(1,0)
+    local SHit=Instance.new("TextButton",Row)
+    SHit.Size=UDim2.new(1,-22,0,26); SHit.Position=UDim2.new(0,11,0,20)
+    SHit.BackgroundTransparency=1; SHit.Text=""
+    local drag=false
+    SHit.MouseButton1Down:Connect(function() drag=true end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if drag and i.UserInputType==Enum.UserInputType.MouseMovement then
+            local r=math.clamp((i.Position.X-SBg.AbsolutePosition.X)/SBg.AbsoluteSize.X,0,1)
+            Config.SpeedValue=math.floor(r*84+16)
+            SFill.Size=UDim2.new(r,0,1,0); TL.Text="walk speed: "..Config.SpeedValue
+        end
+    end)
+end
+do
+    local Row=Instance.new("Frame",Content)
+    Row.Size=UDim2.new(1,0,0,48); Row.BackgroundColor3=C.Card
+    Row.BorderSizePixel=0; Row.LayoutOrder=14
+    Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
+    local TL=Instance.new("TextLabel",Row)
+    TL.Size=UDim2.new(1,-16,0,18); TL.Position=UDim2.new(0,12,0,6)
+    TL.BackgroundTransparency=1; TL.Text="fly speed: "..fly.speed
+    TL.TextColor3=C.TextDim; TL.TextSize=11; TL.Font=Enum.Font.GothamBold
+    TL.TextXAlignment=Enum.TextXAlignment.Left
+    local SBg=Instance.new("Frame",Row)
+    SBg.Size=UDim2.new(1,-22,0,5); SBg.Position=UDim2.new(0,11,0,32)
+    SBg.BackgroundColor3=C.AccentDim; SBg.BorderSizePixel=0
+    Instance.new("UICorner",SBg).CornerRadius=UDim.new(1,0)
+    local SFill=Instance.new("Frame",SBg)
+    SFill.Size=UDim2.new((fly.speed-10)/190,0,1,0)
+    SFill.BackgroundColor3=C.FlyBlue; SFill.BorderSizePixel=0
+    Instance.new("UICorner",SFill).CornerRadius=UDim.new(1,0)
+    local SHit=Instance.new("TextButton",Row)
+    SHit.Size=UDim2.new(1,-22,0,26); SHit.Position=UDim2.new(0,11,0,20)
+    SHit.BackgroundTransparency=1; SHit.Text=""
+    local drag=false
+    SHit.MouseButton1Down:Connect(function() drag=true end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if drag and i.UserInputType==Enum.UserInputType.MouseMovement then
+            local r=math.clamp((i.Position.X-SBg.AbsolutePosition.X)/SBg.AbsoluteSize.X,0,1)
+            fly.speed=math.floor(r*190+10)
+            SFill.Size=UDim2.new(r,0,1,0); TL.Text="fly speed: "..fly.speed
+        end
+    end)
+end
+
+sectionLabel("  TOOLS",20)
+makeToggle("Full Bright","removes darkness & fog",       "FullBright",21,
+    function(on) if on then applyFullBright() else restoreLight() end end)
+makeToggle("Ghost ESP",  "highlight + nametag on ghost", "GhostESP",  22)
+makeToggle("Item ESP",   "highlight all map items",       "ItemESP",   23)
+makeToggle("Hunt Alert", "red banner when ghost hunts",  "HuntAlert", 24)
+
+sectionLabel("  ACTIONS",30)
+
+-- Keybind editor
+local KeybindCard = Instance.new("Frame", Content)
+KeybindCard.Size = UDim2.new(1,0,0,0)
+KeybindCard.AutomaticSize = Enum.AutomaticSize.Y
+KeybindCard.BackgroundColor3 = Color3.fromRGB(12,10,22)
+KeybindCard.BorderSizePixel = 0
+KeybindCard.LayoutOrder = 31
+Instance.new("UICorner", KeybindCard).CornerRadius = UDim.new(0,8)
+do local s=Instance.new("UIStroke",KeybindCard); s.Color=C.StrokeDim; s.Thickness=1 end
+local KBLayout = Instance.new("UIListLayout", KeybindCard)
+KBLayout.SortOrder = Enum.SortOrder.LayoutOrder
+KBLayout.Padding = UDim.new(0,2)
+Instance.new("UIPadding", KeybindCard).PaddingTop = UDim.new(0,6)
+
+local function makeKeybindRow(label, bindKey, order)
+    local Row = Instance.new("Frame", KeybindCard)
+    Row.Size = UDim2.new(1,0,0,30)
+    Row.BackgroundTransparency = 1
+    Row.LayoutOrder = order
+
+    local NameL = Instance.new("TextLabel", Row)
+    NameL.Size = UDim2.new(0,100,1,0)
+    NameL.Position = UDim2.new(0,8,0,0)
+    NameL.BackgroundTransparency = 1
+    NameL.Text = label
+    NameL.TextColor3 = C.TextDim
+    NameL.TextSize = 10
+    NameL.Font = Enum.Font.GothamBold
+    NameL.TextXAlignment = Enum.TextXAlignment.Left
+
+    local Btn = Instance.new("TextButton", Row)
+    Btn.Size = UDim2.new(0,80,0,22)
+    Btn.Position = UDim2.new(1,-88,0.5,-11)
+    Btn.BackgroundColor3 = C.AccentDim
+    Btn.Text = KEYBINDS[bindKey].Name
+    Btn.TextColor3 = Color3.new(1,1,1)
+    Btn.TextSize = 10
+    Btn.Font = Enum.Font.GothamBold
+    Btn.BorderSizePixel = 0
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0,5)
+
+    local listening = false
+    Btn.MouseButton1Click:Connect(function()
+        if listening then return end
+        listening = true
+        Btn.Text = "press key..."
+        Btn.BackgroundColor3 = C.HuntRed
+        local conn
+        conn = UIS.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            local kc = input.KeyCode
+            if kc == Enum.KeyCode.Unknown then return end
+            KEYBINDS[bindKey] = kc
+            Btn.Text = kc.Name
+            Btn.BackgroundColor3 = C.AccentDim
+            listening = false
+            conn:Disconnect()
+        end)
+    end)
+end
+
+makeKeybindRow("Fly Mode", "Fly", 1)
+makeKeybindRow("Ghost Mode", "Ghost", 2)
+makeKeybindRow("Trait Toggle", "Trait", 3)
+Instance.new("Frame", KeybindCard).Size = UDim2.new(1,0,0,6)
+makeButton("Go Ghost Room", "TP to coldest zone",32,Color3.fromRGB(40,60,110),goToGhostRoom)
+makeButton("Go To Van",     "TP to leave button",33,Color3.fromRGB(30,60,30), goToVan)
+makeButton("Open Van Door", "fire van door prompt", 34,Color3.fromRGB(60,50,20), function()
+    vanDoorOpened=false; openVanDoor()
+end)
+makeButton("TP to Cursed", "tele tới cursed item gần nhất", 36, Color3.fromRGB(80,20,20), function()
+    task.spawn(function()
+        local char = getChar()
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then setFarmStatus("No character", C.Red); return end
+
+        -- Quet tat ca nguon co the chua cursed item, chon cai gan nhat
+        local best, bestPart, bestDist = nil, nil, math.huge
+        local function consider(obj)
+            if not obj or not isCursedItem(obj) then return end
+            local bp = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+            if not bp then return end
+            local d = (bp.Position - hrp.Position).Magnitude
+            if d < bestDist then bestDist = d; best = obj; bestPart = bp end
+        end
+
+        local Map = getMap()
+        if Map then
+            local cs = Map:FindFirstChild("CursedSpawns")
+            if cs then for _, v in ipairs(cs:GetChildren()) do consider(v) end end
+            local items = Map:FindFirstChild("Items")
+            if items then for _, v in ipairs(items:GetChildren()) do consider(v) end end
+        end
+        -- Boo-Boo Doll + cursed object o workspace top-level
+        for _, v in ipairs(workspace:GetChildren()) do consider(v) end
+
+        if not bestPart then setFarmStatus("No cursed item found", C.Orange); return end
+        setFarmStatus("TP to cursed: " .. best.Name .. string.format(" (%.0fu)", bestDist), C.FlyPurple)
+        tweenToPos(bestPart.Position + Vector3.new(0, 0, 2), "cursed", 50)
+    end)
+end)
+makeButton("Pull All Tools", "tele tới từng tool quan trọng và tự nhặt", 37, Color3.fromRGB(40,40,80), function()
+    task.spawn(function()
+        local PULL_TOOLS = {
+            "EMF Reader", "Ghost Writing Book", "Spirit Box",
+            "SLS Camera", "Photo Camera", "Salt", "Crucifix",
+        }
+        if not getMap() then setFarmStatus("Map not found!", C.Red); return end
+        local Items = getItems()
+        if not Items then setFarmStatus("Items folder not found!", C.Red); return end
+
+        local picked, missing, full = 0, 0, false
+        for _, toolName in ipairs(PULL_TOOLS) do
+            if hasInInventory(toolName) then
+                -- already in bag, skip
+            else
+                if getTotalToolCount() >= 3 then full = true; break end
+                -- locate tool model in Items folder
+                local nameLow = toolName:lower()
+                local toolObj = nil
+                for _, v in ipairs(Items:GetChildren()) do
+                    if v:IsA("Tool") and v.Name:lower():find(nameLow, 1, true) then
+                        toolObj = v; break
+                    end
+                end
+                if not toolObj then
+                    missing = missing + 1
+                else
+                    setFarmStatus("Pulling: "..toolName, C.FlyBlue)
+                    if bringTool(toolName) then
+                        picked = picked + 1
+                    else
+                        missing = missing + 1
+                    end
+                    task.wait(0.15)
+                end
+            end
+        end
+        local msg = string.format("Picked %d, missing %d", picked, missing)
+        if full then msg = msg .. " (bag full)" end
+        setFarmStatus(msg, picked > 0 and C.Green or C.Orange)
+    end)
+end)
+
+sectionLabel("  OBJECTIVES",37)
+local QuestCard=Instance.new("Frame",Content)
+QuestCard.Size=UDim2.new(1,0,0,0); QuestCard.AutomaticSize=Enum.AutomaticSize.Y
+QuestCard.BackgroundColor3=Color3.fromRGB(10,18,10); QuestCard.BorderSizePixel=0
+QuestCard.LayoutOrder=38
+Instance.new("UICorner",QuestCard).CornerRadius=UDim.new(0,8)
+do local s=Instance.new("UIStroke",QuestCard); s.Color=Color3.fromRGB(25,70,25); s.Thickness=1 end
+local QuestLayout=Instance.new("UIListLayout",QuestCard)
+QuestLayout.SortOrder=Enum.SortOrder.LayoutOrder; QuestLayout.Padding=UDim.new(0,0)
+Instance.new("UIPadding",QuestCard).PaddingTop=UDim.new(0,4)
+
+local questLabels={}
+local function updateQuests()
+    -- Clear cũ
+    for _,v in ipairs(questLabels) do pcall(function() v:Destroy() end) end
+    questLabels={}
+    pcall(function()
+        local map=workspace:FindFirstChild("Map")
+        local van=map and map:FindFirstChild("Van")
+        local vanMdl=van and van:FindFirstChild("Van")
+        local screens=(van and van:FindFirstChild("Screens")) or (vanMdl and vanMdl:FindFirstChild("Screens"))
+        local wb2=screens and screens:FindFirstChild("Whiteboard")
+        local frame=wb2 and wb2:FindFirstChild("SurfaceGui")
+        local objFrame=frame and frame:FindFirstChild("Frame")
+        local objs=objFrame and objFrame:FindFirstChild("Objectives")
+        if not objs then
+            local lbl=Instance.new("TextLabel",QuestCard)
+            lbl.Size=UDim2.new(1,-16,0,24); lbl.BackgroundTransparency=1
+            lbl.Text="No objectives found"; lbl.TextColor3=C.TextMuted
+            lbl.TextSize=10; lbl.Font=Enum.Font.Gotham
+            lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.LayoutOrder=1
+            Instance.new("UIPadding",lbl).PaddingLeft=UDim.new(0,8)
+            table.insert(questLabels,lbl); return
+        end
+        local idx=0
+        for _,obj in ipairs(objs:GetChildren()) do
+            local hc=obj:FindFirstChild("HasCompleted")
+            if hc then
+                idx=idx+1
+                local done=hc.Value==true
+                local Row=Instance.new("Frame",QuestCard)
+                Row.Size=UDim2.new(1,0,0,28); Row.BackgroundTransparency=1
+                Row.BorderSizePixel=0; Row.LayoutOrder=idx
+                local Dot=Instance.new("Frame",Row)
+                Dot.Size=UDim2.new(0,8,0,8); Dot.Position=UDim2.new(0,8,0.5,-4)
+                Dot.BackgroundColor3=done and C.Green or C.TextMuted
+                Dot.BorderSizePixel=0
+                Instance.new("UICorner",Dot).CornerRadius=UDim.new(1,0)
+                local Lbl=Instance.new("TextLabel",Row)
+                Lbl.Size=UDim2.new(1,-24,1,0); Lbl.Position=UDim2.new(0,22,0,0)
+                Lbl.BackgroundTransparency=1; Lbl.Text=obj.Name
+                Lbl.TextColor3=done and C.Green or C.TextDim
+                Lbl.TextSize=10; Lbl.Font=Enum.Font.Gotham
+                Lbl.TextXAlignment=Enum.TextXAlignment.Left
+                Lbl.TextTruncate=Enum.TextTruncate.AtEnd
+                table.insert(questLabels,Row)
+                -- Auto update khi complete
+                hc:GetPropertyChangedSignal("Value"):Connect(function()
+                    Dot.BackgroundColor3=hc.Value and C.Green or C.TextMuted
+                    Lbl.TextColor3=hc.Value and C.Green or C.TextDim
+                end)
+            end
+        end
+        if idx==0 then
+            local lbl=Instance.new("TextLabel",QuestCard)
+            lbl.Size=UDim2.new(1,-16,0,24); lbl.BackgroundTransparency=1
+            lbl.Text="Loading objectives..."; lbl.TextColor3=C.TextMuted
+            lbl.TextSize=10; lbl.Font=Enum.Font.Gotham
+            lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.LayoutOrder=1
+            Instance.new("UIPadding",lbl).PaddingLeft=UDim.new(0,8)
+            table.insert(questLabels,lbl)
+        end
+    end)
+end
+
+-- Update khi map load/reload
+task.spawn(function()
+    while _G.BlairHub do
+        updateQuests()
+        task.wait(3)
+    end
+end)
+workspace.ChildAdded:Connect(function(child)
+    if child.Name=="Map" then task.wait(2); updateQuests() end
+end)
+sectionLabel("  GHOST ROOM",40)
+local GRCard=Instance.new("Frame",Content)
+GRCard.Size=UDim2.new(1,0,0,40); GRCard.BackgroundColor3=Color3.fromRGB(10,14,26)
+GRCard.BorderSizePixel=0; GRCard.LayoutOrder=41
+Instance.new("UICorner",GRCard).CornerRadius=UDim.new(0,8)
+do local s=Instance.new("UIStroke",GRCard); s.Color=Color3.fromRGB(30,50,100); s.Thickness=1 end
+ghostRoomLbl=Instance.new("TextLabel",GRCard)
+ghostRoomLbl.Size=UDim2.new(1,-16,1,0); ghostRoomLbl.Position=UDim2.new(0,12,0,0)
+ghostRoomLbl.BackgroundTransparency=1; ghostRoomLbl.Text="detecting..."
+ghostRoomLbl.TextColor3=C.TextMuted; ghostRoomLbl.TextSize=12
+ghostRoomLbl.Font=Enum.Font.GothamBold; ghostRoomLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+do
+local SanityCard=Instance.new("Frame",sg)
+SanityCard.Name="SanityTracker"
+SanityCard.Size=UDim2.new(0,220,0,0)
+SanityCard.AutomaticSize=Enum.AutomaticSize.Y
+SanityCard.Position=UDim2.new(1,-WIN_W-28,0,16)
+SanityCard.BackgroundColor3=Color3.fromRGB(10,10,22)
+SanityCard.BorderSizePixel=0
+SanityCard.ZIndex=50
+SanityCard.Active=true
+SanityCard.Draggable=true
+Instance.new("UICorner",SanityCard).CornerRadius=UDim.new(0,8)
+do
+    local s=Instance.new("UIStroke",SanityCard)
+    s.Color=C.StrokeDim
+    s.Thickness=1
+end
+
+local SanityTitle=Instance.new("TextLabel",SanityCard)
+SanityTitle.Size=UDim2.new(1,-12,0,22)
+SanityTitle.Position=UDim2.new(0,6,0,4)
+SanityTitle.BackgroundTransparency=1
+SanityTitle.Text="TEAM SANITY"
+SanityTitle.TextColor3=C.Purple
+SanityTitle.TextSize=11
+SanityTitle.Font=Enum.Font.GothamBold
+SanityTitle.TextXAlignment=Enum.TextXAlignment.Left
+SanityTitle.ZIndex=51
+
+local SanityList=Instance.new("Frame",SanityCard)
+SanityList.Size=UDim2.new(1,-8,0,0)
+SanityList.Position=UDim2.new(0,4,0,28)
+SanityList.AutomaticSize=Enum.AutomaticSize.Y
+SanityList.BackgroundTransparency=1
+SanityList.ZIndex=51
+
+local SanLayout=Instance.new("UIListLayout",SanityList)
+SanLayout.SortOrder=Enum.SortOrder.LayoutOrder
+SanLayout.Padding=UDim.new(0,2)
+
+local sanPad=Instance.new("UIPadding",SanityList)
+sanPad.PaddingTop=UDim.new(0,4)
+sanPad.PaddingBottom=UDim.new(0,4)
+sanPad.PaddingLeft=UDim.new(0,4)
+sanPad.PaddingRight=UDim.new(0,4)
+
+local sanityRows={}
+local function getSanityColor(v)
+    if v>=70 then return C.Green
+    elseif v>=40 then return C.Yellow
+    elseif v>=20 then return C.Orange
+    else return C.Red end
+end
+
+local function updateSanityTracker()
+    -- Clear cũ
+    for name,row in pairs(sanityRows) do
+        if not Players:FindFirstChild(name) then
+            pcall(function() row.frame:Destroy() end)
+            sanityRows[name]=nil
+        end
+    end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if not sanityRows[p.Name] then
+            local Row=Instance.new("Frame",SanityList)
+            Row.Size=UDim2.new(1,0,0,32); Row.BackgroundTransparency=1
+            Row.BorderSizePixel=0; Row.LayoutOrder=#Players:GetPlayers()
+
+            local NameL=Instance.new("TextLabel",Row)
+            NameL.Size=UDim2.new(0,80,0,14); NameL.Position=UDim2.new(0,8,0,2)
+            NameL.BackgroundTransparency=1; NameL.Text=p.Name
+            NameL.TextColor3=C.TextDim; NameL.TextSize=9
+            NameL.Font=Enum.Font.GothamBold
+            NameL.TextXAlignment=Enum.TextXAlignment.Left
+            NameL.TextTruncate=Enum.TextTruncate.AtEnd
+
+            local BarBg=Instance.new("Frame",Row)
+            BarBg.Size=UDim2.new(1,-16,0,8); BarBg.Position=UDim2.new(0,8,0,18)
+            BarBg.BackgroundColor3=Color3.fromRGB(30,30,50); BarBg.BorderSizePixel=0
+            Instance.new("UICorner",BarBg).CornerRadius=UDim.new(1,0)
+
+            local BarFill=Instance.new("Frame",BarBg)
+            BarFill.Size=UDim2.new(1,0,1,0); BarFill.BackgroundColor3=C.Green
+            BarFill.BorderSizePixel=0
+            Instance.new("UICorner",BarFill).CornerRadius=UDim.new(1,0)
+
+            local ValL=Instance.new("TextLabel",Row)
+            ValL.Size=UDim2.new(0,35,0,14); ValL.Position=UDim2.new(1,-38,0,2)
+            ValL.BackgroundTransparency=1; ValL.Text="100%"
+            ValL.TextColor3=C.Green; ValL.TextSize=9
+            ValL.Font=Enum.Font.GothamBold
+            ValL.TextXAlignment=Enum.TextXAlignment.Right
+
+            sanityRows[p.Name]={frame=Row,bar=BarFill,val=ValL,name=NameL}
+        end
+
+        -- Đọc sanity từ player instance
+        local row=sanityRows[p.Name]
+        pcall(function()
+            local sanity=p:FindFirstChild("Sanity")
+            local sv=sanity and math.clamp(math.floor(sanity.Value),0,100) or 100
+            local ratio=sv/100
+            TweenService:Create(row.bar,TweenInfo.new(0.3),{
+                Size=UDim2.new(ratio,0,1,0),
+                BackgroundColor3=getSanityColor(sv)
+            }):Play()
+            row.val.Text=sv.."%"
+            row.val.TextColor3=getSanityColor(sv)
+        end)
+    end
+end
+
+-- Update loop
+task.spawn(function()
+    while _G.BlairHub do
+        updateSanityTracker()
+        task.wait(1)
+    end
+end)
+
+-- Hook SanityCellAdded để update ngay lập tức
+pcall(function()
+    RS.Remotes.SanityCellAdded.OnClientEvent:Connect(function()
+        task.wait(0.1); updateSanityTracker()
+    end)
+end)
+end -- close sanity do block
+sectionLabel("  EVIDENCE",45)
+local EvCard=Instance.new("Frame",Content)
+EvCard.Size=UDim2.new(1,0,0,0); EvCard.AutomaticSize=Enum.AutomaticSize.Y
+EvCard.BackgroundColor3=Color3.fromRGB(10,8,18); EvCard.BorderSizePixel=0; EvCard.LayoutOrder=46
+Instance.new("UICorner",EvCard).CornerRadius=UDim.new(0,8)
+do local s=Instance.new("UIStroke",EvCard); s.Color=C.StrokeDim; s.Thickness=1 end
+local EvLayout=Instance.new("UIListLayout",EvCard)
+EvLayout.SortOrder=Enum.SortOrder.LayoutOrder; EvLayout.Padding=UDim.new(0,0)
+Instance.new("Frame",EvCard).Size=UDim2.new(1,0,0,4)
+for i,ev in ipairs(EVIDENCE_INFO) do
+    local Row=Instance.new("Frame",EvCard)
+    Row.Size=UDim2.new(1,0,0,32)
+    Row.BackgroundColor3=i%2==0 and C.CardAlt or Color3.fromRGB(14,10,22)
+    Row.BorderSizePixel=0; Row.LayoutOrder=i
+    local Dot=Instance.new("Frame",Row)
+    Dot.Size=UDim2.new(0,9,0,9); Dot.Position=UDim2.new(0,12,0.5,-4)
+    Dot.BackgroundColor3=Color3.fromRGB(45,42,65); Dot.BorderSizePixel=0
+    Instance.new("UICorner",Dot).CornerRadius=UDim.new(1,0)
+    local IconL=Instance.new("TextLabel",Row)
+    IconL.Size=UDim2.new(0,20,1,0); IconL.Position=UDim2.new(0,26,0,0)
+    IconL.BackgroundTransparency=1; IconL.Text=ev.icon
+    IconL.TextSize=13; IconL.Font=Enum.Font.Gotham; IconL.TextColor3=C.TextDim
+    local NameL=Instance.new("TextLabel",Row)
+    NameL.Size=UDim2.new(0,110,1,0); NameL.Position=UDim2.new(0,48,0,0)
+    NameL.BackgroundTransparency=1; NameL.Text=ev.label; NameL.TextColor3=C.TextDim
+    NameL.TextSize=11; NameL.Font=Enum.Font.GothamBold; NameL.TextXAlignment=Enum.TextXAlignment.Left
+    local StatusLbl=Instance.new("TextLabel",Row)
+    StatusLbl.Size=UDim2.new(0,82,1,0); StatusLbl.Position=UDim2.new(1,-86,0,0)
+    StatusLbl.BackgroundTransparency=1; StatusLbl.Text="waiting..."
+    StatusLbl.TextColor3=C.TextMuted; StatusLbl.TextSize=10
+    StatusLbl.Font=Enum.Font.Gotham; StatusLbl.TextXAlignment=Enum.TextXAlignment.Right
+    evidenceRefs[ev.key]={dot=Dot,status=StatusLbl}
+end
+
+sectionLabel("  GHOST FILTER",55)
+local FilterCard=Instance.new("Frame",Content)
+FilterCard.Size=UDim2.new(1,0,0,0); FilterCard.AutomaticSize=Enum.AutomaticSize.Y
+FilterCard.BackgroundColor3=Color3.fromRGB(10,8,18); FilterCard.BorderSizePixel=0
+FilterCard.LayoutOrder=56
+Instance.new("UICorner",FilterCard).CornerRadius=UDim.new(0,8)
+do local s=Instance.new("UIStroke",FilterCard); s.Color=C.StrokeDim; s.Thickness=1 end
+local FCLayout=Instance.new("UIListLayout",FilterCard)
+FCLayout.SortOrder=Enum.SortOrder.LayoutOrder; FCLayout.Padding=UDim.new(0,4)
+ghostCountLbl=Instance.new("TextLabel",FilterCard)
+ghostCountLbl.Size=UDim2.new(1,-16,0,22); ghostCountLbl.BackgroundTransparency=1
+ghostCountLbl.Text="loading ghost DB..."; ghostCountLbl.TextColor3=C.TextDim
+ghostCountLbl.TextSize=10; ghostCountLbl.Font=Enum.Font.GothamBold
+ghostCountLbl.TextXAlignment=Enum.TextXAlignment.Left; ghostCountLbl.LayoutOrder=0
+local GGrid=Instance.new("Frame",FilterCard)
+GGrid.Size=UDim2.new(1,-12,0,0); GGrid.AutomaticSize=Enum.AutomaticSize.Y
+GGrid.BackgroundTransparency=1; GGrid.LayoutOrder=1
+local GGL=Instance.new("UIGridLayout",GGrid)
+GGL.CellSize=UDim2.new(0.5,-4,0,24); GGL.CellPadding=UDim2.new(0,6,0,4)
+GGL.SortOrder=Enum.SortOrder.LayoutOrder
+task.spawn(function()
+    local waited=0
+    while not next(GHOST_DB) and waited<15 do task.wait(0.5); waited=waited+0.5 end
+    local sortedNames={}
+    for n in pairs(GHOST_DB) do table.insert(sortedNames,n) end
+    table.sort(sortedNames)
+    for i,name in ipairs(sortedNames) do
+        local Cell=Instance.new("Frame",GGrid)
+        Cell.BackgroundColor3=Color3.fromRGB(28,14,50); Cell.BorderSizePixel=0; Cell.LayoutOrder=i
+        Instance.new("UICorner",Cell).CornerRadius=UDim.new(0,5)
+        local Lbl=Instance.new("TextLabel",Cell)
+        Lbl.Size=UDim2.new(1,0,1,0); Lbl.BackgroundTransparency=1; Lbl.Text=name
+        Lbl.TextColor3=C.Purple; Lbl.TextSize=10; Lbl.Font=Enum.Font.GothamBold
+        Lbl.TextXAlignment=Enum.TextXAlignment.Center
+        ghostCells[name]={frame=Cell,label=Lbl}
+    end
+    ghostCountLbl.Text=#sortedNames.." / "..#sortedNames.." ghosts possible"
+    updateGhostFilter()
+end)
+Instance.new("Frame",FilterCard).Size=UDim2.new(1,0,0,6)
+
+local StopBtn=Instance.new("TextButton",Content)
+StopBtn.Size=UDim2.new(1,0,0,34); StopBtn.BackgroundColor3=Color3.fromRGB(140,28,28)
+StopBtn.Text="STOP & UNLOAD"; StopBtn.TextColor3=Color3.new(1,1,1)
+StopBtn.TextSize=12; StopBtn.Font=Enum.Font.GothamBold
+StopBtn.BorderSizePixel=0; StopBtn.LayoutOrder=99
+Instance.new("UICorner",StopBtn).CornerRadius=UDim.new(0,8)
+StopBtn.MouseButton1Click:Connect(makeUnload)
+
+updateGhostFilter()
+
+local _espTimer = 0
+local _lastHunting = false
+RunService.Heartbeat:Connect(function(dt)
+    if not _G.BlairHub then return end
+    local ghost = findGhost()
+    updateGhostESP(ghost)
+    if Config.SpeedHack then
+        pcall(function()
+            local hum=getChar() and getChar():FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed=Config.SpeedValue end
+        end)
+    end
+        if Config.ItemESP then
+            local seen = {}
+
+            for _,info in ipairs(getAllESPItemRoots()) do
+                local root = info.root
+                local itemList = info.deep and root:GetDescendants() or root:GetChildren()
+
+                for _,item in ipairs(itemList) do
+                    -- Bỏ qua player, Map, Camera, v.v. khi scan workspace
+                    if info.workspaceOnly then
+                        local skip = playerNamesCache[item.Name]
+                            or item.Name == "Map"
+                            or item.Name == "Terrain"
+                            or item.Name == "Camera"
+                            or item.Name == "IntroVan"
+                        if skip then continue end
+                    end
+
+                    if item:IsA("Model") or item:IsA("Tool") or item:IsA("BasePart") or item:IsA("MeshPart") then
+                        if shouldESPItem(item) then
+                            seen[item] = true
+                            local espColor = getItemESPColor(item)
+                            local espLabel = getItemESPLabel(item)
+
+                            if not espCache[item] then
+                                addESP(item,espColor,espLabel)
+                            end
+                        elseif espCache[item] then
+                            removeESP(item)
+                        end
+                    end
+                end
+            end
+
+            for obj in pairs(espCache) do
+                if obj ~= ghost and not seen[obj] then
+                    if isImportantItem(obj) or isCursedItem(obj) then
+                        removeESP(obj)
+                    end
+                end
+            end
+        else
+            for obj in pairs(espCache) do
+                if obj ~= ghost and (isImportantItem(obj) or isCursedItem(obj)) then
+                    removeESP(obj)
+                end
+            end
+        end
+        if Config.HuntAlert then
+            local hv = ghost and ghost:FindFirstChild("Hunting")
+            local hunting = hv and hv.Value==true
+            if hunting and not _lastHunting then
+                if _G.BlairHuntAlert then _G.BlairHuntAlert.Visible=true end
+            elseif not hunting and _lastHunting then
+                if _G.BlairHuntAlert then _G.BlairHuntAlert.Visible=false end
+            end
+            _lastHunting = hunting or false
+        else
+            if _G.BlairHuntAlert then _G.BlairHuntAlert.Visible=false end
+        end
+    _espTimer = _espTimer + dt
+    if _espTimer < 0.5 then return end
+    _espTimer = 0
+end)
+
+-- ============================================================================
+-- TRAIT DETECTOR
+-- ============================================================================
+local traitLog = {}
+local traitCard = nil
+local traitVisible = true
+local traitListFrame = nil
+local TRAIT_MAX = 8
+
+local function addTraitLog(text, col)
+    col = col or C.Purple
+    -- Popup thông báo dù trait card đang ẩn
+    task.spawn(function()
+        local popup = Instance.new("Frame", sg)
+        popup.Size = UDim2.new(0, 280, 0, 32)
+        popup.Position = UDim2.new(0.5, -140, 0, 60)
+        popup.BackgroundColor3 = Color3.fromRGB(18, 10, 30)
+        popup.BorderSizePixel = 0
+        popup.ZIndex = 200
+        Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 8)
+        do
+            local s = Instance.new("UIStroke", popup)
+            s.Color = col; s.Thickness = 1.5
+        end
+        local lbl = Instance.new("TextLabel", popup)
+        lbl.Size = UDim2.new(1, -12, 1, 0)
+        lbl.Position = UDim2.new(0, 6, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "🔍 " .. text
+        lbl.TextColor3 = col
+        lbl.TextSize = 11
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.ZIndex = 201
+        TweenService:Create(popup, TweenInfo.new(0.3), {
+            Position = UDim2.new(0.5, -140, 0, 70)
+        }):Play()
+        task.wait(3)
+        TweenService:Create(popup, TweenInfo.new(0.4), {
+            BackgroundTransparency = 1
+        }):Play()
+        TweenService:Create(lbl, TweenInfo.new(0.4), {
+            TextTransparency = 1
+        }):Play()
+        task.wait(0.4)
+        pcall(function() popup:Destroy() end)
+    end)
+
+    -- Thêm vào log trong card
+    table.insert(traitLog, 1, {text=text, col=col, time=os.date("%H:%M:%S")})
+    if #traitLog > TRAIT_MAX then table.remove(traitLog) end
+
+    -- Rebuild list
+    if traitListFrame then
+        for _, v in ipairs(traitListFrame:GetChildren()) do
+            if not v:IsA("UIListLayout") then v:Destroy() end
+        end
+        for i, entry in ipairs(traitLog) do
+            local row = Instance.new("Frame", traitListFrame)
+            row.Size = UDim2.new(1, 0, 0, 28)
+            row.BackgroundTransparency = 1
+            row.LayoutOrder = i
+            local dot = Instance.new("Frame", row)
+            dot.Size = UDim2.new(0, 7, 0, 7)
+            dot.Position = UDim2.new(0, 6, 0.5, -3)
+            dot.BackgroundColor3 = entry.col
+            dot.BorderSizePixel = 0
+            Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+            local tl = Instance.new("TextLabel", row)
+            tl.Size = UDim2.new(1, -50, 1, 0)
+            tl.Position = UDim2.new(0, 18, 0, 0)
+            tl.BackgroundTransparency = 1
+            tl.Text = entry.text
+            tl.TextColor3 = entry.col
+            tl.TextSize = 10
+            tl.Font = Enum.Font.GothamBold
+            tl.TextXAlignment = Enum.TextXAlignment.Left
+            tl.TextTruncate = Enum.TextTruncate.AtEnd
+            local ttime = Instance.new("TextLabel", row)
+            ttime.Size = UDim2.new(0, 40, 1, 0)
+            ttime.Position = UDim2.new(1, -44, 0, 0)
+            ttime.BackgroundTransparency = 1
+            ttime.Text = entry.time
+            ttime.TextColor3 = C.TextMuted
+            ttime.TextSize = 9
+            ttime.Font = Enum.Font.Gotham
+            ttime.TextXAlignment = Enum.TextXAlignment.Right
+        end
+    end
+end
+
+-- Build Trait Card UI
+local TraitCard = Instance.new("Frame", sg)
+TraitCard.Name = "TraitDetector"
+TraitCard.Size = UDim2.new(0, 240, 0, 0)
+TraitCard.AutomaticSize = Enum.AutomaticSize.Y
+TraitCard.Position = UDim2.new(1, -WIN_W-28, 0, 200)
+TraitCard.BackgroundColor3 = Color3.fromRGB(10, 8, 20)
+TraitCard.BorderSizePixel = 0
+TraitCard.ZIndex = 50
+TraitCard.Active = true
+TraitCard.Draggable = true
+Instance.new("UICorner", TraitCard).CornerRadius = UDim.new(0, 8)
+do
+    local s = Instance.new("UIStroke", TraitCard)
+    s.Color = C.StrokeDim; s.Thickness = 1
+end
+
+-- Header
+local traitHeader = Instance.new("Frame", TraitCard)
+traitHeader.Size = UDim2.new(1, 0, 0, 28)
+traitHeader.BackgroundColor3 = Color3.fromRGB(16, 10, 30)
+traitHeader.BorderSizePixel = 0
+Instance.new("UICorner", traitHeader).CornerRadius = UDim.new(0, 8)
+local traitHeaderFix = Instance.new("Frame", traitHeader)
+traitHeaderFix.Size = UDim2.new(1, 0, 0, 8)
+traitHeaderFix.Position = UDim2.new(0, 0, 1, -8)
+traitHeaderFix.BackgroundColor3 = Color3.fromRGB(16, 10, 30)
+traitHeaderFix.BorderSizePixel = 0
+local traitTitle = Instance.new("TextLabel", traitHeader)
+traitTitle.Size = UDim2.new(1, -60, 1, 0)
+traitTitle.Position = UDim2.new(0, 8, 0, 0)
+traitTitle.BackgroundTransparency = 1
+traitTitle.Text = "TRAIT DETECTOR  [T]"
+traitTitle.TextColor3 = C.Purple
+traitTitle.TextSize = 10
+traitTitle.Font = Enum.Font.GothamBold
+traitTitle.TextXAlignment = Enum.TextXAlignment.Left
+local traitToggleBtn = Instance.new("TextButton", traitHeader)
+traitToggleBtn.Size = UDim2.new(0, 36, 0, 18)
+traitToggleBtn.Position = UDim2.new(1, -40, 0.5, -9)
+traitToggleBtn.BackgroundColor3 = C.AccentDim
+traitToggleBtn.Text = "hide"
+traitToggleBtn.TextColor3 = Color3.new(1,1,1)
+traitToggleBtn.TextSize = 9
+traitToggleBtn.Font = Enum.Font.GothamBold
+traitToggleBtn.BorderSizePixel = 0
+Instance.new("UICorner", traitToggleBtn).CornerRadius = UDim.new(0, 4)
+
+-- Body
+local traitBody = Instance.new("Frame", TraitCard)
+traitBody.Size = UDim2.new(1, 0, 0, 0)
+traitBody.AutomaticSize = Enum.AutomaticSize.Y
+traitBody.Position = UDim2.new(0, 0, 0, 28)
+traitBody.BackgroundTransparency = 1
+traitBody.BorderSizePixel = 0
+
+traitListFrame = Instance.new("Frame", traitBody)
+traitListFrame.Size = UDim2.new(1, -8, 0, 0)
+traitListFrame.AutomaticSize = Enum.AutomaticSize.Y
+traitListFrame.Position = UDim2.new(0, 4, 0, 4)
+traitListFrame.BackgroundTransparency = 1
+local traitLL = Instance.new("UIListLayout", traitListFrame)
+traitLL.SortOrder = Enum.SortOrder.LayoutOrder
+traitLL.Padding = UDim.new(0, 2)
+
+local traitEmptyLbl = Instance.new("TextLabel", traitListFrame)
+traitEmptyLbl.Size = UDim2.new(1, 0, 0, 28)
+traitEmptyLbl.BackgroundTransparency = 1
+traitEmptyLbl.Text = "No traits detected yet..."
+traitEmptyLbl.TextColor3 = C.TextMuted
+traitEmptyLbl.TextSize = 10
+traitEmptyLbl.Font = Enum.Font.Gotham
+traitEmptyLbl.LayoutOrder = 99
+
+local traitPad = Instance.new("Frame", traitBody)
+traitPad.Size = UDim2.new(1, 0, 0, 6)
+traitPad.BackgroundTransparency = 1
+
+-- Toggle logic
+local function setTraitVisible(v)
+    traitVisible = v
+    traitBody.Visible = v
+    traitToggleBtn.Text = v and "hide" or "show"
+end
+
+traitToggleBtn.MouseButton1Click:Connect(function()
+    setTraitVisible(not traitVisible)
+end)
+
+traitCard = TraitCard
+
+-- Hotkey Trait
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe or not _G.BlairHub then return end
+    if input.KeyCode == KEYBINDS.Trait then
+        setTraitVisible(not traitVisible)
+    end
+end)
+
+-- ============================================================================
+-- TRAIT DETECTION LOGIC (v7.9 — based on Blair Wiki data)
+local TS = {
+    traitDetected   = {},
+    huntCount       = 0,
+    huntTimes       = {},
+    huntDurations   = {},
+    saltStepCount   = 0,
+    lightOffCount   = 0,
+    lightOnCount    = 0,
+    itemThrowCount  = 0,
+    itemThrowWindow = 0,
+    ghostSpeedLog   = {},
+    lastHuntStart   = 0,
+    lastHuntEnd     = 0,
+    parabolicScream = false,
+    nookItemMissing = false,
+    vuultLightCount = 0,
+    vuultWindow     = 0,
+    mareConsecOff   = 0,
+    lastLightState  = nil,
+    lastLightChange = 0,
+    lightHooked     = false,
+    saltHooked      = false,
+}
+
+local function initTraitDetection()
+local TRAIT_GHOST_MAP = {
+    wraith_salt="Wraith", mare_light="Mare", phantom_los="Phantom",
+    demon_hunt="Demon", shade_nohunt="Shade", poltergeist_polt="Poltergeist",
+    revenant_speed="Revenant", banshee_target="Banshee", vuult_breaker="Vuult",
+    krasue_range="Krasue", jiangshi_stay="Jiangshi", yama_growl="Yama",
+    lament_hide="Lament", oni_active="Oni", spirit_smudge="Spirit",
+    yurei_teleport="Yurei",
+}
+
+local function markTrait(key, text, col)
+    if TS.traitDetected and TS.traitDetected[key] then return end
+    local ghostName = TRAIT_GHOST_MAP[key]
+    if ghostName then
+        local possible = getPossibleGhosts()
+        if #possible>0 then
+            local found=false
+            for _,g in ipairs(possible) do if g==ghostName then found=true; break end end
+            if not found then return end
+        end
+    end
+    if not TS.traitDetected then TS.traitDetected = {} end
+    TS.traitDetected[key] = true
+    if traitEmptyLbl and traitEmptyLbl.Parent then
+        traitEmptyLbl:Destroy()
+        traitEmptyLbl = nil
+    end
+    addTraitLog(text, col)
+    print("[Trait]", text)
+end
+
+-- Hook đèn ghost room một lần
+local function hookGhostRoomLight()
+        if TS.lightHooked then return end
+    pcall(function()
+        local Zones = getZones()
+        if not Zones then return end
+        local coldZone, coldTemp = nil, 100
+        for _, zone in ipairs(Zones:GetChildren()) do
+            local tv   = zone:FindFirstChild("_____Temperature")
+            local excl = zone:FindFirstChild("Exclude")
+            if tv and tv.Value < coldTemp and not (excl and excl.Value) then
+                coldTemp = tv.Value; coldZone = zone
+            end
+        end
+        if not coldZone then return end
+        local zl = coldZone:FindFirstChild("ZoneLight")
+        local ls = zl and zl.Value
+        local sw = ls and ls:FindFirstChild("SwitchState")
+        if not sw then return end
+        TS.lightHooked = true
+        TS.lastLightState = sw.Value
+
+        sw:GetPropertyChangedSignal("Value"):Connect(function()
+            local now    = tick()
+            local isOn   = sw.Value
+            local wasOff = (TS.lastLightState == false)
+
+            if not isHunting() then
+                if not isOn then
+                    -- Đèn tắt
+                    TS.lightOffCount = TS.lightOffCount + 1
+                    TS.mareConsecOff = TS.mareConsecOff + 1
+
+                    -- Vuult: bật/tắt nhanh (< 4s giữa các lần)
+                    if now - TS.lastLightChange < 4 then
+                        TS.vuultLightCount = TS.vuultLightCount + 1
+                        if TS.vuultLightCount >= 4 then
+                            markTrait("vuult_breaker",
+                                string.format("VUULT: đèn bật/tắt liên tục %dx trong thời gian ngắn!", TS.vuultLightCount),
+                                C.Yellow)
+                        end
+                    else
+                        TS.vuultLightCount = 1
+                    end
+                else
+                    -- Đèn bật lại
+                    local offDuration = now - TS.lastLightChange
+                    -- Mare trick: tắt rồi bật ngay lại (< 2s) để bẫy player
+                    if wasOff and offDuration < 2 then
+                        TS.lightOnCount = TS.lightOnCount + 1
+                        if TS.lightOnCount >= 2 then
+                            markTrait("mare_trick",
+                                "MARE: tắt đèn rồi bật ngay lại để bẫy! (Mare light trick)",
+                                C.ColdBlue)
+                        end
+                    end
+                    -- Reset Mare consecutive off count
+                    TS.mareConsecOff = 0
+                    TS.vuultLightCount = 0
+                end
+
+                -- Mare: tắt đèn >= 3 lần liên tiếp không bật lại
+                if TS.mareConsecOff >= 3 then
+                    markTrait("mare_light",
+                        string.format("MARE: tắt đèn ghost room %dx liên tiếp (không bật lại)!", TS.mareConsecOff),
+                        C.ColdBlue)
+                end
+            end
+
+            TS.lastLightState  = isOn
+            TS.lastLightChange = now
+        end)
+        print("[Trait] Ghost room light hooked:", coldZone.Name)
+    end)
+end
+
+-- Hook salt
+local function hookSalt()
+        if TS.saltHooked then return end
+    pcall(function()
+        local items = getItems()
+        if not items then return end
+        local salt = items:FindFirstChild("Salt")
+        if not salt then return end
+                TS.saltHooked = true
+        -- Wraith: ghost KHÔNG tạo Prints sau khi dẫm muối
+        -- Detect qua SaltPlaced event → chờ 3s → check Prints
+        local remote = salt:FindFirstChild("Remote")
+        local placed = remote and remote:FindFirstChild("SaltPlaced")
+        if placed then
+            placed.Event:Connect(function()
+                TS.saltStepCount = TS.saltStepCount + 1
+                task.wait(3)
+                local prints = getMap() and getMap():FindFirstChild("Prints")
+                local hasPrint = prints and #prints:GetChildren() > 0
+                if not hasPrint then
+                    markTrait("wraith_salt",
+                        "WRAITH: dẫm muối nhưng không để lại dấu chân UV!",
+                        C.Purple)
+                end
+            end)
+        end
+    end)
+end
+
+-- ── HUNT TRACKER ─────────────────────────────────────────────────────────────
+task.spawn(function()
+    local wasHunting = false
+    local huntStartTime = 0
+    while _G.BlairHub do
+        task.wait(0.25)
+        pcall(function()
+            local hunting = isHunting()
+            if hunting and not wasHunting then
+                -- Hunt bắt đầu
+                TS.huntCount     = TS.huntCount + 1
+                huntStartTime = tick()
+                TS.lastHuntStart = huntStartTime
+                table.insert(TS.huntTimes, huntStartTime)
+                TS.ghostSpeedLog = {}
+
+                -- Krasue: hunt bắt đầu từ rất xa (> 40 studs)
+                local ghost    = findGhost()
+                local ghostHrp = ghost and ghost:FindFirstChild("HumanoidRootPart")
+                local myHrp    = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+                if ghostHrp and myHrp then
+                    local dist = (ghostHrp.Position - myHrp.Position).Magnitude
+                    if dist > 40 then
+                        markTrait("krasue_range",
+                            string.format("KRASUE: hunt bắt đầu từ xa %.0f studs!", dist),
+                            C.HuntRed)
+                    end
+                end
+
+                -- Demon: hunt lại quá nhanh (< 25s kể từ hunt trước kết thúc)
+                if TS.lastHuntEnd > 0 then
+                    local gap = huntStartTime - TS.lastHuntEnd
+                    if gap < 25 then
+                        markTrait("demon_hunt",
+                            string.format("DEMON: hunt lại chỉ sau %.0fs! (cooldown cực ngắn)", gap),
+                            C.Red)
+                    end
+                end
+
+            elseif not hunting and wasHunting then
+                -- Hunt kết thúc
+                local duration = tick() - huntStartTime
+                table.insert(TS.huntDurations, duration)
+                TS.lastHuntEnd = tick()
+
+                -- Lament: fake end → check lights/footsteps vẫn còn
+                -- Phát hiện bằng cách kiểm tra ghost vẫn còn active sau "end"
+                task.spawn(function()
+                    task.wait(1)
+                    if isHunting() then
+                        markTrait("lament_fake",
+                            "LAMENT: fake kết thúc hunt! Vẫn đang hunt sau khi đèn dừng nhấp nháy.",
+                            C.TextDim)
+                    end
+                end)
+            end
+
+            -- Speed tracking khi hunting
+            if hunting then
+                local ghost    = findGhost()
+                local ghostHrp = ghost and ghost:FindFirstChild("HumanoidRootPart")
+                if ghostHrp then
+                    local now = tick()
+                    if #TS.ghostSpeedLog > 0 then
+                        local last   = TS.ghostSpeedLog[#TS.ghostSpeedLog]
+                        local spd    = (ghostHrp.Position - last.pos).Magnitude / (now - last.t)
+                        local myHrp  = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+                        local hasLOS = myHrp and (ghostHrp.Position - myHrp.Position).Magnitude < 30
+
+                        -- Revenant: chậm ngoài LOS, cực nhanh khi LOS
+                        if hasLOS and spd > 10 then
+                            markTrait("revenant_speed",
+                                string.format("REVENANT: tốc độ %.0f studs/s khi nhìn thấy player (LOS)!", spd),
+                                C.Orange)
+                        end
+                    end
+                    table.insert(TS.ghostSpeedLog, {pos = ghostHrp.Position, t = tick()})
+                    if #TS.ghostSpeedLog > 20 then table.remove(TS.ghostSpeedLog, 1) end
+                end
+            end
+
+            wasHunting = hunting
+        end)
+    end
+end)
+
+-- ── PHANTOM: GhostinLOS remote ───────────────────────────────────────────────
+pcall(function()
+    RS.Remotes.GhostinLOS.OnClientEvent:Connect(function()
+        markTrait("phantom_los",
+            "PHANTOM: xuất hiện trong tầm nhìn player (LOS sanity drain)!",
+            C.FlyPurple)
+    end)
+end)
+
+-- ── POLTERGEIST: ném nhiều item cùng lúc (poltsplosion) ─────────────────────
+-- Poltergeist có thể ném tới 10 items cùng lúc
+pcall(function()
+    local remote = RS.Remotes:FindFirstChild("Eventboard/ExecuteEvent")
+    if not remote then return end
+    remote.OnClientEvent:Connect(function()
+        local now = tick()
+        if now - TS.itemThrowWindow > 5 then
+            TS.itemThrowCount  = 0
+            TS.itemThrowWindow = now
+        end
+        TS.itemThrowCount = TS.itemThrowCount + 1
+        if TS.itemThrowCount >= 4 then
+            markTrait("poltergeist_polt",
+                string.format("POLTERGEIST: %d items bị ném trong 5s (poltsplosion)!", TS.itemThrowCount),
+                C.Orange)
+        end
+    end)
+end)
+
+-- ── BANSHEE: screech qua Parabolic Microphone ────────────────────────────────
+-- Banshee screech là cách chắc chắn nhất để identify
+pcall(function()
+    local parabolic = getRemote("ParabolicMicrophoneScream")
+    if not parabolic then return end
+    parabolic.OnClientEvent:Connect(function()
+        if not TS.parabolicScream then
+            TS.parabolicScream = true
+            markTrait("banshee_screech",
+                "BANSHEE: nghe tiếng screech qua Parabolic Microphone!",
+                C.Yellow)
+        end
+    end)
+end)
+
+-- ── SHADE: ít hoạt động, không hunt khi 2+ người ────────────────────────────
+-- Shade sanity threshold 35% (thấp hơn bình thường 50%)
+-- Không perform ghost event khi 2+ người trong nhà
+task.spawn(function()
+    local noEventTimer  = 0
+    local gameStartTime = tick()
+    while _G.BlairHub do
+        task.wait(10)
+        pcall(function()
+            if tick() - gameStartTime < 120 then return end -- chờ 2 phút
+            local pCount = #Players:GetPlayers()
+            if pCount >= 2 and not isHunting() then
+                noEventTimer = noEventTimer + 10
+                if noEventTimer >= 200 then
+                    markTrait("shade_nohunt",
+                        string.format("SHADE: không hunt suốt %.0fs với %d người (sanity threshold thấp)!", noEventTimer, pCount),
+                        C.TextDim)
+                end
+            else
+                if isHunting() then noEventTimer = 0 end
+            end
+        end)
+    end
+end)
+
+-- ── SPIRIT: smudge block hunt 180s (vs 120s thông thường) ────────────────────
+task.spawn(function()
+    local smudgeTime  = 0
+    local smudgeActive = false
+    while _G.BlairHub do
+        task.wait(1)
+        pcall(function()
+            if isHunting() then smudgeActive = false; smudgeTime = 0; return end
+            local items  = getItems()
+            local smudge = items and items:FindFirstChild("Smudge Stick")
+            local burn   = smudge and smudge:FindFirstChild("Burning")
+            if burn and burn.Value and not smudgeActive then
+                smudgeActive = true
+                smudgeTime   = tick()
+                print("[Trait] Smudge detected, timer started")
+            end
+            if smudgeActive and smudgeTime > 0 then
+                local elapsed = tick() - smudgeTime
+                if elapsed > 180 and not isHunting() then
+                    markTrait("spirit_smudge",
+                        string.format("SPIRIT: không hunt %.0fs sau smudge (Spirit = 180s, others = 120s)!", elapsed),
+                        C.Green)
+                    smudgeActive = false
+                end
+            end
+        end)
+    end
+end)
+
+-- ── HARROW: không roam, chỉ ở ghost room (DUY NHẤT không roam) ───────────────
+-- Wiki: "All ghosts, with the exception of the Harrow, may roam"
+-- Harrow: speed tăng khi gần ghost room, giảm khi đi xa
+task.spawn(function()
+    local origin     = nil
+    local stayTick   = 0
+    local stayCount  = 0
+    task.wait(15)
+    while _G.BlairHub do
+        task.wait(5)
+        pcall(function()
+            if isHunting() then return end
+            local ghost = findGhost()
+            local hrp   = ghost and ghost:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            if not origin then origin = hrp.Position; return end
+            local dist = (hrp.Position - origin).Magnitude
+            if dist < 12 then
+                stayCount = stayCount + 1
+                if stayCount >= 8 then -- 40s không rời ghost room
+                    markTrait("harrow_noroam",
+                        "HARROW: ghost không rời ghost room (HARROW là ghost DUY NHẤT không roam!)",
+                        C.ColdLight)
+                end
+            else
+                -- Ghost đã roam → không phải Harrow
+                stayCount = 0
+                origin    = hrp.Position
+            end
+        end)
+    end
+end)
+
+-- ── JIANGSHI: lặp lại interaction 3 lần liên tiếp ────────────────────────────
+-- Jiangshi đặc trưng: trigger cùng 1 loại event 3 lần liên tiếp
+pcall(function()
+    local remote = RS.Remotes:FindFirstChild("Eventboard/ExecuteEvent")
+    if not remote then return end
+    local lastEventType = nil
+    local consecCount   = 0
+    remote.OnClientEvent:Connect(function(evType)
+        if evType == lastEventType then
+            consecCount = consecCount + 1
+            if consecCount >= 3 then
+                markTrait("jiangshi_repeat",
+                    string.format("JIANGSHI: lặp lại event '%s' %dx liên tiếp!", tostring(evType), consecCount),
+                    C.ColdLight)
+            end
+        else
+            lastEventType = evType
+            consecCount   = 1
+        end
+    end)
+end)
+
+-- ── YUREI: teleport đột ngột về ghost room ───────────────────────────────────
+task.spawn(function()
+    local ghostLastPos = nil
+    while _G.BlairHub do
+        task.wait(0.5)
+        pcall(function()
+            if isHunting() then ghostLastPos = nil; return end
+            local ghost = findGhost()
+            local hrp   = ghost and ghost:FindFirstChild("HumanoidRootPart")
+            if not hrp then ghostLastPos = nil; return end
+            if ghostLastPos then
+                local moved = (hrp.Position - ghostLastPos).Magnitude
+                if moved > 25 then
+                    markTrait("yurei_teleport",
+                        string.format("YUREI: ghost teleport đột ngột %.0f studs về ghost room!", moved),
+                        C.ColdBlue)
+                end
+            end
+            ghostLastPos = hrp.Position
+        end)
+    end
+end)
+
+-- ── YAMA: Spirit Box growl đặc trưng ────────────────────────────────────────
+-- Yama growl ≠ Demon roar: Yama growl xảy ra khi KHÔNG hunt
+task.spawn(function()
+    while _G.BlairHub do
+        task.wait(1)
+        pcall(function()
+            local char = getChar()
+            local bp   = getBP()
+            for _, parent in ipairs({char, bp}) do
+                if parent then
+                    local sb = parent:FindFirstChild("Spirit Box")
+                    if sb then
+                        local gt = sb:FindFirstChild("GhostTalk")
+                        if gt then
+                            for _, snd in ipairs(gt:GetChildren()) do
+                                if snd:IsA("Sound") and not snd:GetAttribute("yama_hooked") then
+                                    snd:SetAttribute("yama_hooked", true)
+                                    local n = snd.Name:lower()
+                                    if n:find("growl") or n:find("roar") or n:find("yama") then
+                                        snd:GetPropertyChangedSignal("Playing"):Connect(function()
+                                            if snd.Playing and not isHunting() then
+                                                markTrait("yama_growl",
+                                                    "YAMA: Spirit Box growl khi KHÔNG hunt (≠ Demon roar)!",
+                                                    C.FlyPurple)
+                                            end
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- ── NOOK: steal/mất item trong Items folder ───────────────────────────────────
+-- Nook steal items, Poltergeist throw items — khác nhau ở chỗ item biến mất
+task.spawn(function()
+    local knownItems = {}
+    task.wait(5)
+    pcall(function()
+        local items = getItems()
+        if not items then return end
+        for _, v in ipairs(items:GetChildren()) do
+            knownItems[v] = true
+        end
+        items.ChildRemoved:Connect(function(child)
+            if knownItems[child] then
+                knownItems[child] = nil
+                if not isHunting() then
+                    markTrait("nook_steal",
+                        "NOOK: item '"..child.Name.."' biến mất khỏi map (Nook steal)!",
+                        C.Orange)
+                end
+            end
+        end)
+    end)
+end)
+
+-- ── VUULT: bật tắt đèn NHANH (< 3s liên tiếp), phân biệt với Mare ────────────
+-- Vuult: đèn bật tắt liên tục rất nhanh (vuultage behavior)
+-- Mare: đèn tắt lâu, thích darkness, không bật lại liên tục
+-- → Đã xử lý trong hookGhostRoomLight() ở trên
+
+-- ── DEMON: roar khi crucifix được dùng ──────────────────────────────────────
+pcall(function()
+    local crucifixRemote = getRemote("CrucifixRemote")
+    if not crucifixRemote then return end
+    crucifixRemote.OnClientEvent:Connect(function(evType)
+        if tostring(evType):lower():find("roar") or tostring(evType):lower():find("demon") then
+            markTrait("demon_roar",
+                "DEMON: phát ra tiếng roar khi crucifix được kích hoạt!",
+                C.Red)
+        end
+    end)
+end)
+
+-- ── INIT: Hook light và salt khi map load ────────────────────────────────────
+task.spawn(function()
+    task.wait(3)
+    hookGhostRoomLight()
+    hookSalt()
+end)
+
+workspace.ChildAdded:Connect(function(child)
+    if child.Name == "Map" then
+        -- Reset tất cả state
+        TS.traitDetected = {}
+        traitLog = {}
+        TS.huntCount       = 0
+        TS.huntTimes       = {}
+        TS.huntDurations   = {}
+        TS.saltStepCount   = 0
+        TS.lightOffCount   = 0
+        TS.lightOnCount    = 0
+        TS.mareConsecOff   = 0
+        TS.vuultLightCount = 0
+        TS.itemThrowCount  = 0
+        TS.itemThrowWindow = 0
+        TS.ghostSpeedLog   = {}
+        TS.lastHuntStart   = 0
+        TS.lastHuntEnd     = 0
+        TS.parabolicScream = false
+        TS.nookItemMissing = false
+        TS.lightHooked     = false
+        TS.saltHooked      = false
+        TS.lastLightState  = nil
+        TS.lastLightChange = 0
+        traitLog = {}
+
+        if traitListFrame then
+            for _, v in ipairs(traitListFrame:GetChildren()) do
+                if not v:IsA("UIListLayout") then v:Destroy() end
+            end
+            if not traitEmptyLbl or not traitEmptyLbl.Parent then
+                traitEmptyLbl = Instance.new("TextLabel", traitListFrame)
+                traitEmptyLbl.Size = UDim2.new(1, 0, 0, 28)
+                traitEmptyLbl.BackgroundTransparency = 1
+                traitEmptyLbl.Text = "No traits detected yet..."
+                traitEmptyLbl.TextColor3 = C.TextMuted
+                traitEmptyLbl.TextSize = 10
+                traitEmptyLbl.Font = Enum.Font.Gotham
+                traitEmptyLbl.LayoutOrder = 99
+            end
+        end
+
+        task.wait(3)
+        hookGhostRoomLight()
+        hookSalt()
+        print("[Trait v2.0] Reset for new map")
+    end
+end)
+
+end -- close initTraitDetection
+initTraitDetection()
+
+print("[Blair Hub v7.8] Loaded!")
+print("  FIX: EMF — wait char replicate + wait remote replicate before fire")
+print("  FIX: bringTool — drop equipped first nếu đủ 3 slot (không drop random)")
+print("  FIX: Sanity — lp.Sanity NumberValue trực tiếp (confirmed scan)")
+print("  FIX: Stamina — lp.DoubleStamina BoolValue (confirmed scan)")
+print("  NEW: openVanDoor() tự động khi start farm")
+print("  NEW: Leave = goToVan() tween đến van, player tự bấm")
+print("  NEW: Button 'Go To Van' + 'Open Van Door' trong ACTIONS")
