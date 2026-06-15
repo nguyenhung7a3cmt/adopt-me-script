@@ -369,10 +369,14 @@ local function hookHRP()
             if (key == "CFrame" or key == "Position") and _flyHookActive then
                 local src = debug.info(2, "s") or ""
                 if src:find("PlayerController") or src:find("DoorCollisions") then
-                    return -- block server/other-script reset khi dang fly
+                    return
                 end
             end
-            return old_ni(self, key, value)
+            if old_ni then
+                return old_ni(self, key, value)
+            else
+                rawset(self, key, value)
+            end
         end)
         setreadonly(mt, true)
         _hrpHooked = true
