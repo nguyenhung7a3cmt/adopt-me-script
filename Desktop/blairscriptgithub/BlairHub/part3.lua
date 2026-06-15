@@ -1383,11 +1383,17 @@ SanityCard.Name="SanityTracker"
 SanityCard.Size=UDim2.new(0,220,0,0)
 SanityCard.AutomaticSize=Enum.AutomaticSize.Y
 SanityCard.Position=UDim2.new(1,-WIN_W-28,0,16)
--- auto follow Win khi drag
+- auto follow Win khi drag (dừng follow nếu user đã tự kéo)
+local _sanityUserMoved = false
+SanityCard.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+        _sanityUserMoved = true
+    end
+end)
 task.spawn(function()
     while sg and sg.Parent do
         task.wait(0.05)
-        if Win and SanityCard then
+        if Win and SanityCard and not _sanityUserMoved then
             local wp = Win.Position
             SanityCard.Position = UDim2.new(
                 wp.X.Scale, wp.X.Offset - 228,
@@ -1611,10 +1617,12 @@ RunService.Heartbeat:Connect(function(dt)
     updateGhostESP(ghost)
     if Config.SpeedHack then
         pcall(function()
-            local hum=getChar() and getChar():FindFirstChildOfClass("Humanoid")
+            local _sc = getChar()
+            local hum = _sc and _sc:FindFirstChildOfClass("Humanoid")
             if hum then hum.WalkSpeed=Config.SpeedValue end
         end)
     end
+        -- ItemESP chỉ chạy khi _espTimer reset (bên dưới) — move check lên trên
         if Config.ItemESP then
             local seen = {}
 
@@ -1636,7 +1644,8 @@ RunService.Heartbeat:Connect(function(dt)
                     if item:IsA("Model") or item:IsA("Tool") or item:IsA("BasePart") or item:IsA("MeshPart") then
                         if shouldESPItem(item) then
                             -- Distance check 500 studs
-                            local _hrp = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+                            local _c = getChar()
+                            local _hrp = _c and _c:FindFirstChild("HumanoidRootPart")
                             local _anchor = item:IsA("BasePart") and item
                                 or item:FindFirstChild("Handle")
                                 or item:FindFirstChildWhichIsA("BasePart")
@@ -1709,6 +1718,7 @@ RunService.Heartbeat:Connect(function(dt)
     _espTimer = _espTimer + dt
     if _espTimer < 0.5 then return end
     _espTimer = 0
+end) -- end Heartbeatimer = 0
 end)
 
 -- ============================================================================
