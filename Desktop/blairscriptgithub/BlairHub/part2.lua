@@ -852,18 +852,21 @@ local function doAllQuests()
     pcall(function()
         local deadline2 = tick() + 60
         -- Chụp ghost
-        local ghost = findGhost()
-        local ghostPart = ghost and ghost:FindFirstChildWhichIsA("BasePart")
-        if ghostPart then objPhoto(ghostPart, "Ghost bonus photo") end
-        if not _G.BlairHub then goto done_bonus end
+        if _G.BlairHub then
+            local ghost = findGhost()
+            local ghostPart = ghost and ghost:FindFirstChildWhichIsA("BasePart")
+            if ghostPart then objPhoto(ghostPart, "Ghost bonus photo") end
+        end
         -- Chụp tất cả cursed objects
-        objPhotoCursed(deadline2)
-        if not _G.BlairHub then goto done_bonus end
+        if _G.BlairHub then
+            objPhotoCursed(deadline2)
+        end
         -- Chụp Boo-Boo Doll
-        local boo = findBooBoo()
-        local booPart = partOf(boo)
-        if booPart then objPhoto(booPart, "Boo-Boo bonus photo") end
-        ::done_bonus::
+        if _G.BlairHub then
+            local boo = findBooBoo()
+            local booPart = partOf(boo)
+            if booPart then objPhoto(booPart, "Boo-Boo bonus photo") end
+        end
     end)
     setFarmStatus(string.format("Quests: %d done, %d skipped + bonus photos", done, skipped),
         done > 0 and C.Green or C.Orange)
