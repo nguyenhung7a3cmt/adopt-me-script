@@ -966,6 +966,14 @@ local function makeToggle(label,sub,configKey,order,cb,ac)
     TK.Size=UDim2.new(0,16,0,16); TK.Position=UDim2.new(0,3,0.5,-8)
     TK.BackgroundColor3=Color3.new(1,1,1); TK.BorderSizePixel=0
     Instance.new("UICorner",TK).CornerRadius=UDim.new(1,0)
+    -- Sync visual với config hiện tại (đã load từ file)
+    local _initOn = Config[configKey]
+    if _initOn then
+        TBg.BackgroundColor3 = ac
+        TK.Position = UDim2.new(1,-19,0.5,-8)
+        SL.Text = sub.."  |  on"
+        SL.TextColor3 = ac
+    end
     local Btn=Instance.new("TextButton",TBg)
     Btn.Size=UDim2.new(1,0,1,0); Btn.BackgroundTransparency=1; Btn.Text=""
     Btn.MouseButton1Click:Connect(function()
@@ -1383,17 +1391,11 @@ SanityCard.Name="SanityTracker"
 SanityCard.Size=UDim2.new(0,220,0,0)
 SanityCard.AutomaticSize=Enum.AutomaticSize.Y
 SanityCard.Position=UDim2.new(1,-WIN_W-28,0,16)
-- auto follow Win khi drag (dừng follow nếu user đã tự kéo)
-local _sanityUserMoved = false
-SanityCard.InputBegan:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-        _sanityUserMoved = true
-    end
-end)
+-- auto follow Win khi drag
 task.spawn(function()
     while sg and sg.Parent do
         task.wait(0.05)
-        if Win and SanityCard and not _sanityUserMoved then
+        if Win and SanityCard then
             local wp = Win.Position
             SanityCard.Position = UDim2.new(
                 wp.X.Scale, wp.X.Offset - 228,
@@ -1622,7 +1624,6 @@ RunService.Heartbeat:Connect(function(dt)
             if hum then hum.WalkSpeed=Config.SpeedValue end
         end)
     end
-        -- ItemESP chỉ chạy khi _espTimer reset (bên dưới) — move check lên trên
         if Config.ItemESP then
             local seen = {}
 
