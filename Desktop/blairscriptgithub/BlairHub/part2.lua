@@ -861,7 +861,6 @@ local function doAllQuests()
         local boo = findBooBoo()
         local booPart = partOf(boo)
         if booPart then objPhoto(booPart, "Boo-Boo bonus photo") end
-        ::done_bonus::
     end)
     setFarmStatus(string.format("Quests: %d done, %d skipped + bonus photos", done, skipped),
         done > 0 and C.Green or C.Orange)
