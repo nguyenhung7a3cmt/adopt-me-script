@@ -1954,6 +1954,11 @@ task.spawn(function()
     GRArrow.Enabled = false
 end)
 -- ======================================
+local addTraitLog
+addTraitLog = function(text, col)
+    col = col or C.Purple
+    task.spawn(function()
+        local popup = Instance.new("Frame", sg)
         popup.Size = UDim2.new(0, 280, 0, 32)
         popup.Position = UDim2.new(0.5, -140, 0, 60)
         popup.BackgroundColor3 = Color3.fromRGB(18, 10, 30)
@@ -1986,6 +1991,7 @@ end)
         }):Play()
         task.wait(0.4)
         pcall(function() popup:Destroy() end)
+    end)
     enableGhostMode()
 
     -- Thêm vào log trong card
