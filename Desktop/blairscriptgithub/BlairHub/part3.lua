@@ -1238,7 +1238,12 @@ makeButton("TP to Cursed", "tele tới cursed item gần nhất", 36, Color3.fro
             if items then for _, v in ipairs(items:GetChildren()) do consider(v) end end
         end
         -- Boo-Boo Doll + cursed object o workspace top-level
-        for _, v in ipairs(workspace:GetChildren()) do consider(v) end
+        -- Chỉ lấy Model/Tool, không lấy BasePart lẻ để tránh match parent chain sai
+        for _, v in ipairs(workspace:GetChildren()) do
+            if v:IsA("Model") or v:IsA("Tool") then
+                consider(v)
+            end
+        end
 
         if not bestPart then setFarmStatus("No cursed item found", C.Orange); return end
         setFarmStatus("TP to cursed: " .. best.Name .. string.format(" (%.0fu)", bestDist), C.FlyPurple)
@@ -1391,11 +1396,36 @@ SanityCard.Name="SanityTracker"
 SanityCard.Size=UDim2.new(0,220,0,0)
 SanityCard.AutomaticSize=Enum.AutomaticSize.Y
 SanityCard.Position=UDim2.new(1,-WIN_W-28,0,16)
--- auto follow Win khi drag
+-- Chỉ follow Win nếu user chưa tự kéo SanityCard đi
+local _sanityPinned = false
+local _sanityDragging = false
+
+SanityCard.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1
+    or inp.UserInputType == Enum.UserInputType.Touch then
+        _sanityDragging = true
+    end
+end)
+SanityCard.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1
+    or inp.UserInputType == Enum.UserInputType.Touch then
+        _sanityDragging = false
+        -- Nếu user đã kéo ra khỏi vị trí default thì pin lại
+        if Win and SanityCard then
+            local wp = Win.Position
+            local defaultX = wp.X.Offset - 228
+            local curX = SanityCard.Position.X.Offset
+            if math.abs(curX - defaultX) > 10 then
+                _sanityPinned = true
+            end
+        end
+    end
+end)
+
 task.spawn(function()
     while sg and sg.Parent do
         task.wait(0.05)
-        if Win and SanityCard then
+        if Win and SanityCard and not _sanityPinned and not _sanityDragging then
             local wp = Win.Position
             SanityCard.Position = UDim2.new(
                 wp.X.Scale, wp.X.Offset - 228,

@@ -781,7 +781,7 @@ end
 -- Dispatch theo nội dung objective
 local function runObjectiveHandler(objName)
     local n = objName:lower()
-    local deadline = tick() + 30
+        local deadline = tick() + 60
 
     -- "free / release the boo-boo doll" -> fire prompt giai phong
     if (n:find("free") or n:find("release") or n:find("save")) and (n:find("boo") or n:find("doll")) then
@@ -839,8 +839,8 @@ local function doAllQuests()
             if ok and res ~= nil then handled = true end
             if handled then
                 -- chờ HasCompleted lật sang true (tối đa 6s)
-                local wd = tick() + 6
-                while tick() < wd and not hc.Value and _G.BlairHub do task.wait(0.3) end
+                local wd = tick() + 8
+                while tick() < wd and not hc.Value and _G.BlairHub do task.wait(0.1) end
                 if hc.Value then done = done + 1 else skipped = skipped + 1 end
             else
                 skipped = skipped + 1
