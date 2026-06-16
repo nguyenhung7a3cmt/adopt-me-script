@@ -1292,9 +1292,26 @@ makeButton("Photo Suspects", "chụp ảnh cursed + ghost + boo-boo", 36, Color3
 
         local function photoAt(part, label)
             if not part or not _G.BlairHub then return end
-            setFarmStatus("Chụp: " .. label, C.FlyPurple)
-            tweenToPos(part.Position + Vector3.new(0, 0, 3), label, 50)
-            task.wait(0.5)
+            setFarmStatus("Chup: " .. label, C.FlyPurple)
+            -- TP den vi tri nhin thang vao target
+            local targetPos = part.Position
+            local offset = Vector3.new(0, 1, 4)
+            tweenToPos(targetPos + offset, label, 50)
+            task.wait(0.6)
+            -- Xoay camera nhin vao target
+            pcall(function()
+                local char = getChar()
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+                    workspace.CurrentCamera.CFrame = CFrame.lookAt(
+                        hrp.Position + Vector3.new(0, 1.5, 0),
+                        targetPos
+                    )
+                end
+            end)
+            task.wait(0.3)
+            -- Chup anh
             pcall(function()
                 local svc = game:GetService("ReplicatedStorage"):FindFirstChild("PhotoCameraService")
                 local ev = svc and svc:FindFirstChild("Events")
