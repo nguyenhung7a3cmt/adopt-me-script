@@ -160,21 +160,10 @@ local function isCursedItem(item)
         end
     end
 
-    local parent = item
-    while parent do
-        local parentName = normalizeItemName(parent.Name)
-
-        if parentName == "cursedspawns" then
-            return true
-        end
-
-        for _,keyword in ipairs(CURSED_KEYWORDS) do
-            if parentName:find(keyword, 1, true) then
-                return true
-            end
-        end
-
-        parent = parent.Parent
+    -- Chỉ check parent trực tiếp là CursedSpawns, không walk chain
+    local directParent = item.Parent
+    if directParent and normalizeItemName(directParent.Name) == "cursedspawns" then
+        return true
     end
 
     return false
@@ -1409,13 +1398,13 @@ end)
 SanityCard.InputEnded:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1
     or inp.UserInputType == Enum.UserInputType.Touch then
+        -- Dùng AbsolutePosition (pixel thực tế) thay vì Position.X.Offset
+        task.wait(0.05) -- đợi Roblox update AbsolutePosition sau khi thả
         _sanityDragging = false
-        -- Nếu user đã kéo ra khỏi vị trí default thì pin lại
         if Win and SanityCard then
-            local wp = Win.Position
-            local defaultX = wp.X.Offset - 228
-            local curX = SanityCard.Position.X.Offset
-            if math.abs(curX - defaultX) > 10 then
+            local defaultAbsX = Win.AbsolutePosition.X - 228
+            local curAbsX = SanityCard.AbsolutePosition.X
+            if math.abs(curAbsX - defaultAbsX) > 10 then
                 _sanityPinned = true
             end
         end
