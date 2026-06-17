@@ -93,9 +93,7 @@ local function runDailyLoop()
             if Config.AutoDaily then
                 setStatus("checking daily tasks...")
                 -- try to fire daily check
-                if Remotes.DailiesEvent1 then
-                    pcall(function() Remotes.DailiesEvent1:FireServer() end)
-                end
+-- Dailies check đã auto-hook qua OnClientEvent, không cần fire
                 -- process any buffered tasks
                 for _, taskData in ipairs(activeTasks) do
                     if Config.AutoDaily then
@@ -178,6 +176,10 @@ end
 -- ============================================================
 -- INIT
 -- ============================================================
+print("[AdoptHub] Hooking dailies...")
+print("[AdoptHub] DailiesEvent1:", Remotes.DailiesEvent1)
+print("[AdoptHub] DailiesEvent2:", Remotes.DailiesEvent2)
+hookDailies()
 hookDailies()
 runDailyLoop()
 runCollectLoop()

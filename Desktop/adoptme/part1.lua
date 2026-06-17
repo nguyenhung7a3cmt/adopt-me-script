@@ -104,9 +104,9 @@ end)
 -- ============================================================
 local statusLbl = nil
 local function setStatus(text)
-    S.statusText = text
+    statusText = text
     if statusLbl then
-        pcall(function() statusLbl.Text = text end)
+        pcall(function() statusLbl.Text = "● " .. text end)
     end
 end
 
