@@ -160,6 +160,7 @@ local function runPetCareLoop()
     task.spawn(function()
         while _G.AdoptHub do
             if Config.AutoFarm then
+                print("[DEBUG] PetCareLoop tick, AutoFarm =", Config.AutoFarm)
                 setStatus("pet care: progressing ailments...")
                 for i = 1, 3 do
                     tryCall(Remotes.ProgressPetAilment)
