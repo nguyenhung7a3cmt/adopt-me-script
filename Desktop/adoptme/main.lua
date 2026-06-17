@@ -16,7 +16,12 @@ local function load(file, arg)
 end
 
 local S = load("part1.lua")
-S = load("part2.lua", S)
-S = load("part3.lua", S)
+print("[DEBUG] Part1 loaded")
 
-print("[AdoptHub] Loaded")
+S = load("part2.lua", S)
+print("[DEBUG] Part2 loaded")
+
+S = load("part3.lua", S)
+print("[DEBUG] Part3 loaded")
+
+print("[AdoptHub] Script loaded successfully")

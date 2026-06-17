@@ -483,11 +483,9 @@ end)
 -- ============================================================
 win.Size = UDim2.new(0,0,0,0)
 win.Position = UDim2.new(0.5,0,0.5,0)
-TweenService:Create(win, TweenInfo.new(0.25, Enum.EasingStyle.Back), {
-    Size = UDim2.new(0,300,0,fullH),
-    Position = UDim2.new(0.5,-150,0.5,-210)
-}):Play()
-task.delay(0.25, updateShadow)
+win.Size = UDim2.new(0, 300, 0, fullH)
+win.Position = UDim2.new(0.5, -150, 0.5, -210)
+updateShadow()
 
 setStatus("idle — ready")
 
