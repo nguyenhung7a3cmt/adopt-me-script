@@ -1,0 +1,6 @@
+*.xlsx 
+*.txt 
+AppData/ 
+.vscode/ 
+node_modules/ 
+.env 
