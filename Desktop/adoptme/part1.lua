@@ -21,8 +21,8 @@ local Config = {
 -- ============================================================
 -- REMOTES CACHE
 -- ============================================================
-local API = RS:WaitForChild("API", 10)
-local NET = RS:WaitForChild("adoptme_new_net", 10)
+local API = RS:FindFirstChild("API")
+local NET = RS:FindFirstChild("adoptme_new_net")
 
 local Remotes = {}
 
