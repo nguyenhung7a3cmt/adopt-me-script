@@ -9,7 +9,7 @@ pcall(function()
     if old then old:Destroy() end
 end)
 
-local BASE = "https://github.com/nguyenhung7a3cmt/adopt-me-script/blob/main/Desktop/adoptme/main.lua"
+local BASE = "https://raw.githubusercontent.com/nguyenhung7a3cmt/adopt-me-script/main/Desktop/adoptme/"
 
 local function load(file, arg)
     return loadstring(game:HttpGet(BASE .. file))(arg)
