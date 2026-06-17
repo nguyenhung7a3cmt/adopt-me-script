@@ -62,42 +62,32 @@ end
 -- Cache all remotes
 pcall(function()
     if API then
-        Remotes.DataChanged        = API:WaitForChild("DataAPI",10)     and API.DataAPI:WaitForChild("DataChanged",5)
-        Remotes.PayCollect         = API:WaitForChild("PayAPI",10)      and API.PayAPI:WaitForChild("Collect",5)
-        Remotes.ClaimDailyReward   = API:WaitForChild("DailyLoginAPI",10) and API.DailyLoginAPI:WaitForChild("ClaimDailyReward",5)
-        Remotes.ClaimStarReward    = API:WaitForChild("DailyLoginAPI",10) and API.DailyLoginAPI:WaitForChild("ClaimStarReward",5)
-        Remotes.ProgressPetAilment = API:WaitForChild("AilmentsAPI",10) and API.AilmentsAPI:WaitForChild("ProgressPetMeAilment",5)
-        Remotes.PizzaClaim         = API:WaitForChild("RoleplayAPI",10) and API.RoleplayAPI:WaitForChild("PizzaShopClaimDough",5)
-        Remotes.PizzaNav           = API:WaitForChild("RoleplayAPI",10) and API.RoleplayAPI:WaitForChild("NavigateToPizzaShopConveyor",5)
-        Remotes.MinigameJoin       = API:WaitForChild("MinigameAPI",10) and API.MinigameAPI:WaitForChild("AttemptJoin",5)
-        Remotes.MicrogameStart     = API:WaitForChild("MicrogameAPI",10) and API.MicrogameAPI:WaitForChild("AttemptStart",5)
-        Remotes.TeleToLocation     = API:WaitForChild("LocationAPI",10) and API.LocationAPI:WaitForChild("TeleToLocation",5)
+        Remotes.DataChanged        = API:WaitForChild("DataAPI/DataChanged", 10)
+        Remotes.PayCollect         = API:WaitForChild("PayAPI/Collect", 10)
+        Remotes.ClaimDailyReward   = API:WaitForChild("DailyLoginAPI/ClaimDailyReward", 10)
+        Remotes.ClaimStarReward    = API:WaitForChild("DailyLoginAPI/ClaimStarReward", 10)
+        Remotes.ProgressPetAilment = API:WaitForChild("AilmentsAPI/ProgressPetMeAilment", 10)
+        Remotes.PizzaClaim         = API:WaitForChild("RoleplayAPI/PizzaShopClaimDough", 10)
+        Remotes.PizzaNav           = API:WaitForChild("RoleplayAPI/NavigateToPizzaShopConveyor", 10)
+        Remotes.MinigameJoin       = API:WaitForChild("MinigameAPI/AttemptJoin", 10)
+        Remotes.MicrogameStart     = API:WaitForChild("MicrogameAPI/AttemptStart", 10)
+        Remotes.TeleToLocation     = API:WaitForChild("LocationAPI/TeleToLocation", 10)
     end
 end)
 
 -- Dailies net remotes (numbered children)
 pcall(function()
     if NET then
-        local dailiesFolder = NET
-        for _, part in ipairs({"adoptme_new","modules","Dailies","DailiesNetService"}) do
-            if dailiesFolder then dailiesFolder = dailiesFolder:FindFirstChild(part) end
-        end
-        if dailiesFolder then
-            -- Find RemoteEvents with :9 and :15 in name
-            for _, v in ipairs(dailiesFolder:GetChildren()) do
-                if v:IsA("RemoteEvent") then
-                    if v.Name:find(":9") or v.Name == "9" then
-                        Remotes.DailiesEvent1 = v
-                        print("[DEBUG] Found DailiesEvent1:", v.Name)
-                    elseif v.Name:find(":15") or v.Name == "15" then
-                        Remotes.DailiesEvent2 = v
-                        print("[DEBUG] Found DailiesEvent2:", v.Name)
-                    end
-                end
-            end
-        end
+        Remotes.DailiesEvent1 = NET:FindFirstChild("adoptme_new.modules.Dailies.DailiesNetService:9")
+        Remotes.DailiesEvent2 = NET:FindFirstChild("adoptme_new.modules.Dailies.DailiesNetService:15")
+        print("[DEBUG] Found DailiesEvent1:", Remotes.DailiesEvent1 and Remotes.DailiesEvent1.Name)
+        print("[DEBUG] Found DailiesEvent2:", Remotes.DailiesEvent2 and Remotes.DailiesEvent2.Name)
     end
 end)
+
+for name, remote in pairs(Remotes) do
+    print("[DEBUG] Remote", name, "=", remote)
+end
 
 -- ============================================================
 -- STATUS
