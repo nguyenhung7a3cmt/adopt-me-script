@@ -83,15 +83,15 @@ pcall(function()
             if dailiesFolder then dailiesFolder = dailiesFolder:FindFirstChild(part) end
         end
         if dailiesFolder then
-            local ch = dailiesFolder:GetChildren()
-            -- :9 and :15 are RemoteEvents inside DailiesNetService folder
-            -- they show as child RemoteEvents
-            for _, v in ipairs(ch) do
+            -- Find RemoteEvents with :9 and :15 in name
+            for _, v in ipairs(dailiesFolder:GetChildren()) do
                 if v:IsA("RemoteEvent") then
-                    if not Remotes.DailiesEvent1 then
+                    if v.Name:find(":9") or v.Name == "9" then
                         Remotes.DailiesEvent1 = v
-                    elseif not Remotes.DailiesEvent2 then
+                        print("[DEBUG] Found DailiesEvent1:", v.Name)
+                    elseif v.Name:find(":15") or v.Name == "15" then
                         Remotes.DailiesEvent2 = v
+                        print("[DEBUG] Found DailiesEvent2:", v.Name)
                     end
                 end
             end
