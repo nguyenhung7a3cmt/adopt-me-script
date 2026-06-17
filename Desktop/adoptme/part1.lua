@@ -103,6 +103,7 @@ end)
 -- STATUS
 -- ============================================================
 local statusLbl = nil
+local statusText = "idle"
 local function setStatus(text)
     statusText = text
     if statusLbl then
