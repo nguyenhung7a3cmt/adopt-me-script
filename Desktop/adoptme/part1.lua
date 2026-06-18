@@ -35,6 +35,22 @@ local function getRemote(parent, path)
     return node
 end
 
+-- WaitForChild version (timeout 10s) de doi remote load
+local function getRemoteWait(parent, path, timeout)
+    if not parent then return nil end
+    timeout = timeout or 10
+    local node = parent
+    for part in path:gmatch("[^/]+") do
+        if not node then return nil end
+        local ok, result = pcall(function()
+            return node:WaitForChild(part, timeout)
+        end)
+        node = (ok and result) or node:FindFirstChild(part)
+        if not node then return nil end
+    end
+    return node
+end
+
 -- Resolve paths like:
 -- adoptme_new.modules.Dailies.DailiesNetService:9
 local function tryFindNetRemote(path)
@@ -66,12 +82,12 @@ pcall(function()
         Remotes.ClaimDailyReward    = getRemote(API, "DailyLoginAPI/ClaimDailyReward")
         Remotes.ClaimStarReward     = getRemote(API, "DailyLoginAPI/ClaimStarReward")
         -- Ailment remotes (mỗi loại có remote riêng)
-        Remotes.ProgressPetMeAilment    = getRemote(API, "AilmentsAPI/ProgressPetMeAilment")
-        Remotes.ProgressDirtyAilment    = getRemote(API, "AilmentsAPI/ProgressDirtyAilment")
-        Remotes.ChooseMysteryAilment    = getRemote(API, "AilmentsAPI/ChooseMysteryAilment")
-        Remotes.PetAilmentCompleted     = getRemote(API, "AilmentsAPI/PetAilmentCompleted")
-        Remotes.BabyAilmentCompleted    = getRemote(API, "AilmentsAPI/BabyAilmentCompleted")
-        Remotes.ShowHealingEffect       = getRemote(API, "AilmentsAPI/ShowHealingEffect")
+        Remotes.ProgressPetMeAilment    = getRemoteWait(API, "AilmentsAPI/ProgressPetMeAilment")
+        Remotes.ProgressDirtyAilment    = getRemoteWait(API, "AilmentsAPI/ProgressDirtyAilment")
+        Remotes.ChooseMysteryAilment    = getRemoteWait(API, "AilmentsAPI/ChooseMysteryAilment")
+        Remotes.PetAilmentCompleted     = getRemoteWait(API, "AilmentsAPI/PetAilmentCompleted")
+        Remotes.BabyAilmentCompleted    = getRemoteWait(API, "AilmentsAPI/BabyAilmentCompleted")
+        Remotes.ShowHealingEffect       = getRemoteWait(API, "AilmentsAPI/ShowHealingEffect")
         -- Map ailment name -> remote (dùng trong part2)
         Remotes.AilmentMap = {
             hungry   = Remotes.ProgressPetMeAilment,
