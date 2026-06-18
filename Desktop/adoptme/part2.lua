@@ -125,17 +125,7 @@ local function progressPetCare(taskInfo)
     if pet and sendPetReaction(pet, "NavigateReaction") then
         anySuccess = true
     end
-    if pet then
-        local okReset, resReset = tryCall(Remotes.ResetPetNetwork, S.lp, pet)
-        if not okReset then
-            okReset, resReset = tryCall(Remotes.ResetPetNetwork, pet)
-        end
-        if okReset then
-            anySuccess = true
-        else
-            setDebugError("ResetNetworkOwnership failed: " .. tostring(resReset))
-        end
-    end
+    -- ResetPetNetwork skipped (remote not available client-side)
 
     for i = 1, tries do
         for _, ailment in ipairs(PET_AILMENTS) do
