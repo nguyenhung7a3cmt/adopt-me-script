@@ -30,6 +30,27 @@ end)
 
 local BASE = "https://raw.githubusercontent.com/nguyenhung7a3cmt/adopt-me-script/main/Desktop/adoptme/"
 
+-- Build cache nhiều lần (0s, 0.5s, 2s) de dam bao ca remotes load cham
+local function buildRemoteCache()
+    pcall(function()
+        local RS2 = game:GetService("ReplicatedStorage")
+        for _, obj in ipairs(RS2:GetDescendants()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                _G.CachedRemotes[obj.Name] = _G.CachedRemotes[obj.Name] or obj
+                local full = obj:GetFullName():gsub("^ReplicatedStorage%.", "")
+                _G.CachedRemotes[full] = obj
+            end
+        end
+        local n = 0
+        for _ in pairs(_G.CachedRemotes) do n = n + 1 end
+        print("[AdoptHub] Cache pass done:", n, "entries")
+    end)
+end
+
+buildRemoteCache()
+task.delay(0.5, buildRemoteCache)
+task.delay(2.0, buildRemoteCache)
+
 local function load(file, arg)
     return loadstring(game:HttpGet(BASE .. file))(arg)
 end

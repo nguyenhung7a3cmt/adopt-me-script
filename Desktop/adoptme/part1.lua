@@ -144,29 +144,71 @@ pcall(function()
     end
 end)
 
--- Tim remote theo dung ten (vd "DailiesNetService:9") trong toan bo descendants cua NET.
--- An toan hon sort index vi khong phu thuoc cau truc folder.
-local function findNetRemoteByName(targetName)
+-- Tim RemoteEvent index thu N (sort theo Name) trong folder "DailiesNetService"
+-- bat ke no nam o dau trong NET descendants.
+local function findDailiesRemote(index)
     if not NET then return nil end
-    if NET:FindFirstChild(targetName) then
-        return NET:FindFirstChild(targetName)
-    end
+
+    -- Buoc 1: tim folder ten "DailiesNetService" bat ky level nao
+    local folder = nil
     for _, inst in ipairs(NET:GetDescendants()) do
-        if inst.Name == targetName and (inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
-            return inst
+        if inst.Name == "DailiesNetService" and inst:IsA("Folder") then
+            folder = inst
+            break
         end
     end
+    -- Buoc 1b: neu NET chinh la DailiesNetService
+    if not folder and NET.Name == "DailiesNetService" then
+        folder = NET
+    end
+
+    if folder then
+        local children = {}
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                table.insert(children, child)
+            end
+        end
+        -- Sort theo Name (so hoc chu)
+        table.sort(children, function(a, b)
+            local na, nb = tonumber(a.Name), tonumber(b.Name)
+            if na and nb then return na < nb end
+            return a.Name < b.Name
+        end)
+        if children[index] then
+            return children[index]
+        end
+    end
+
+    -- Fallback: su dung tryFindNetRemote voi nhieu path co the
+    local paths = {
+        "adoptme_new.modules.Dailies.DailiesNetService:" .. index,
+        "modules.Dailies.DailiesNetService:" .. index,
+        "Dailies.DailiesNetService:" .. index,
+        "DailiesNetService:" .. index,
+    }
+    for _, p in ipairs(paths) do
+        local r = tryFindNetRemote(p)
+        if r then return r end
+    end
+
     return nil
 end
 
 pcall(function()
     if NET then
-        Remotes.DailiesEvent1 = findNetRemoteByName("DailiesNetService:9")
-            or tryFindNetRemote("adoptme_new.modules.Dailies.DailiesNetService:9")
-        Remotes.DailiesEvent2 = findNetRemoteByName("DailiesNetService:15")
-            or tryFindNetRemote("adoptme_new.modules.Dailies.DailiesNetService:15")
-        print("[DEBUG] Found DailiesEvent1:", Remotes.DailiesEvent1 and Remotes.DailiesEvent1.Name)
-        print("[DEBUG] Found DailiesEvent2:", Remotes.DailiesEvent2 and Remotes.DailiesEvent2.Name)
+        -- In toan bo descendants de debug lan dau
+        print("[DEBUG] NET name:", NET.Name)
+        for _, inst in ipairs(NET:GetDescendants()) do
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
+                print("[DEBUG] NET remote:", inst:GetFullName())
+            end
+        end
+
+        Remotes.DailiesEvent1 = findDailiesRemote(9)
+        Remotes.DailiesEvent2 = findDailiesRemote(15)
+        print("[DEBUG] DailiesEvent1:", Remotes.DailiesEvent1 and Remotes.DailiesEvent1:GetFullName() or "NIL")
+        print("[DEBUG] DailiesEvent2:", Remotes.DailiesEvent2 and Remotes.DailiesEvent2:GetFullName() or "NIL")
     end
 end)
 
