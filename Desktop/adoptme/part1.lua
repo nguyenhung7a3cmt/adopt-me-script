@@ -54,18 +54,16 @@ end
 -- Tim remote theo ten, uu tien _G.CachedRemotes
 local function getRemoteByName(name)
     if _G.CachedRemotes then
-        -- Thu full path truoc (chinh xac hon)
-        local fullKey = "API/AilmentsAPI/" .. name
-        if _G.CachedRemotes[fullKey] then
-            return _G.CachedRemotes[fullKey]
-        end
         -- Thu ten don gian
         if _G.CachedRemotes[name] then
             return _G.CachedRemotes[name]
         end
-        -- Scan cache tim bat ky key nao ket thuc bang ten
+        -- Scan cache: tim key nao co phan cuoi trung voi name
+        local suffix1 = "/" .. name  -- e.g. "AilmentsAPI/ProgressPetMeAilment"
+        local suffix2 = "." .. name  -- e.g. "AilmentsAPI.ProgressPetMeAilment"
         for key, obj in pairs(_G.CachedRemotes) do
-            if key:sub(-#name) == name then
+            local skey = tostring(key)
+            if skey:sub(-#suffix1) == suffix1 or skey:sub(-#suffix2) == suffix2 or skey == name then
                 return obj
             end
         end
