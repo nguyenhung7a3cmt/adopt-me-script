@@ -1,43 +1,26 @@
 -- AdoptHub Loader
 _G.AdoptHub = false
+task.wait(1.5)
+_G.AdoptHub = true
 
--- Cache remotes NGAY LẬP TỨC, không wait
+-- Pre-cache toan bo remotes NGAY LUC DAU truoc khi game filter
 local RS = game:GetService("ReplicatedStorage")
 _G.CachedRemotes = {}
-
-local function doCache()
-    local n = 0
+pcall(function()
     for _, obj in ipairs(RS:GetDescendants()) do
         if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local full = obj:GetFullName():gsub("^ReplicatedStorage%.", "")
+            -- Key theo ten don gian
             _G.CachedRemotes[obj.Name] = _G.CachedRemotes[obj.Name] or obj
+            -- Key theo full path (relative tu RS)
+            local full = obj:GetFullName():gsub("^ReplicatedStorage%.", "")
             _G.CachedRemotes[full] = obj
-            n = n + 1
         end
     end
-    return n
-end
-
--- Cache lần 1 ngay lúc đầu
-local n1 = doCache()
-print("[AdoptHub] Cache lần 1:", n1, "remotes")
-
--- Cache lần 2 sau 0.5s
-task.delay(0.5, function()
-    local n2 = doCache()
-    print("[AdoptHub] Cache lần 2:", n2, "remotes")
+    local n = 0
+    for _ in pairs(_G.CachedRemotes) do n = n + 1 end
+    print("[AdoptHub] Pre-cached " .. n .. " remotes")
 end)
 
--- Cache lần 3 sau 2s
-task.delay(2, function()
-    local n3 = doCache()
-    print("[AdoptHub] Cache lần 3:", n3, "remotes")
-    -- Check AilmentsAPI có không
-    local r = _G.CachedRemotes["ProgressPetMeAilment"]
-    print("[AdoptHub] ProgressPetMeAilment:", r and r:GetFullName() or "NIL")
-end)
-
-_G.AdoptHub = true
 
 pcall(function()
     local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
@@ -53,8 +36,11 @@ end
 
 local S = load("part1.lua")
 print("[DEBUG] Part1 loaded")
+
 S = load("part2.lua", S)
 print("[DEBUG] Part2 loaded")
+
 S = load("part3.lua", S)
 print("[DEBUG] Part3 loaded")
+
 print("[AdoptHub] Script loaded successfully")
