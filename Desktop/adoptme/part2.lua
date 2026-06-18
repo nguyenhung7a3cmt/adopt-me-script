@@ -112,7 +112,77 @@ end
 -- ============================================================
 -- QUEST ACTIONS
 -- ============================================================
+local function clickAilmentButtons()
+    local pg = S.lp:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    local anyClicked = false
+
+    -- Cach 1: FocusPetApp - AilmentContainer.End (khi dang focus pet)
+    local focusApp = pg:FindFirstChild("FocusPetApp")
+    if focusApp then
+        for _, container in ipairs(focusApp:GetDescendants()) do
+            if container.Name == "AilmentContainer" then
+                local endBtn = container:FindFirstChild("End")
+                if endBtn and endBtn.Visible then
+                    pcall(function()
+                        local conn = endBtn.MouseButton1Click
+                        if conn then
+                            endBtn.MouseButton1Click:Fire()
+                            anyClicked = true
+                            setDebugStep("ailment_click", "FocusPetApp.End")
+                        end
+                    end)
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+
+    -- Cach 2: AilmentsMonitorApp - MobileAilmentContainer.Ailment
+    local monitorApp = pg:FindFirstChild("AilmentsMonitorApp")
+    if monitorApp then
+        for _, obj in ipairs(monitorApp:GetDescendants()) do
+            if obj.Name == "Ailment" and obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                if obj.Visible then
+                    pcall(function() obj.MouseButton1Click:Fire() end)
+                    anyClicked = true
+                    setDebugStep("ailment_click", "MonitorApp.Ailment")
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+
+    return anyClicked
+end
+
 local function progressPetCare(taskInfo)
+    setDebugStep("pet_care", "clicking ailment buttons")
+    setStatus("pet care: clicking needs...")
+
+    local tries = 3
+    if taskInfo and taskInfo.progress and taskInfo.goal then
+        tries = math.clamp(taskInfo.goal - taskInfo.progress, 1, 6)
+    end
+
+    local anySuccess = false
+    for i = 1, tries do
+        if not _G.AdoptHub then break end
+        if clickAilmentButtons() then
+            anySuccess = true
+        end
+        task.wait(jitter(0.5))
+    end
+
+    if anySuccess then
+        setDebugStep("pet_care_ok", "done")
+        setStatus("pet care: done")
+    else
+        setDebugStep("pet_care_fail", "no buttons found/clicked")
+        setStatus("pet care: no UI buttons found")
+    end
+    return anySuccess
+end
     setDebugStep("pet_care", "starting care loop")
     setStatus("pet care: working needs")
     local pet = focusActivePet()
