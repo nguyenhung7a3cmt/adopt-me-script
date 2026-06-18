@@ -76,11 +76,19 @@ end
 local function sendPetReaction(pet, reactionName)
     if not Remotes.ReplicateReactions or not pet then
         setDebugStep("reaction", "missing remote or pet")
-        return
+        return false
     end
     local payload = {}
     payload[reactionName] = true
-    tryCall(Remotes.ReplicateReactions, pet, payload)
+    local ok, res = tryCall(Remotes.ReplicateReactions, S.lp, pet, payload)
+    if not ok then
+        setDebugError("ReplicateActiveReactions failed: " .. tostring(res))
+        ok, res = tryCall(Remotes.ReplicateReactions, pet, payload)
+        if not ok then
+            setDebugError("ReplicateActiveReactions alt failed: " .. tostring(res))
+        end
+    end
+    return ok
 end
 
 local function focusActivePet()
@@ -88,7 +96,14 @@ local function focusActivePet()
     local pet = findActivePet()
     if pet then
         setDebugStep("focus_pet", pet:GetFullName())
-        tryCall(Remotes.FocusPet, pet)
+        local ok, res = tryCall(Remotes.FocusPet, S.lp, pet)
+        if not ok then
+            setDebugError("FocusPet failed: " .. tostring(res))
+            ok, res = tryCall(Remotes.FocusPet, pet)
+            if not ok then
+                setDebugError("FocusPet alt failed: " .. tostring(res))
+            end
+        end
         task.wait(0.15)
     end
     return pet
@@ -106,32 +121,61 @@ local function progressPetCare(taskInfo)
         tries = math.clamp(taskInfo.goal - taskInfo.progress, 1, 8)
     end
 
-    for i = 1, tries do
-        if pet then
-            sendPetReaction(pet, "NavigateReaction")
-            tryCall(Remotes.ResetPetNetwork, pet)
+    local anySuccess = false
+    if pet and sendPetReaction(pet, "NavigateReaction") then
+        anySuccess = true
+    end
+    if pet then
+        local okReset, resReset = tryCall(Remotes.ResetPetNetwork, S.lp, pet)
+        if not okReset then
+            okReset, resReset = tryCall(Remotes.ResetPetNetwork, pet)
         end
+        if okReset then
+            anySuccess = true
+        else
+            setDebugError("ResetNetworkOwnership failed: " .. tostring(resReset))
+        end
+    end
 
+    for i = 1, tries do
         for _, ailment in ipairs(PET_AILMENTS) do
             if not _G.AdoptHub then break end
             setDebugStep("pet_ailment", ailment)
             setStatus("pet care: " .. ailment)
             if pet then
                 local reaction = ailment:gsub("^%l", string.upper) .. "AilmentReaction"
-                sendPetReaction(pet, reaction)
+                if sendPetReaction(pet, reaction) then
+                    anySuccess = true
+                end
             end
-            local ok, res = tryCall(Remotes.ProgressPetAilment, ailment)
+            local ok, res = tryCall(Remotes.ProgressPetAilment, S.lp, pet, ailment)
             if not ok then
+                ok, res = tryCall(Remotes.ProgressPetAilment, ailment)
+            end
+            if ok then
+                anySuccess = true
+            else
                 setDebugError("ProgressPetAilment failed: " .. tostring(res))
             end
             task.wait(jitter(0.35))
         end
 
-        local ok2, res2 = tryCall(Remotes.ProgressPetAilment)
+        local ok2, res2 = tryCall(Remotes.ProgressPetAilment, S.lp, pet)
         if not ok2 then
+            ok2, res2 = tryCall(Remotes.ProgressPetAilment, pet)
+        end
+        if ok2 then
+            anySuccess = true
+        else
             setDebugError("ProgressPetAilment(empty) failed: " .. tostring(res2))
         end
         task.wait(jitter(0.8))
+    end
+
+    if not anySuccess then
+        setDebugStep("pet_care_fail", "no remote success")
+        setStatus("pet care: failed")
+        return false
     end
     return true
 end
