@@ -12,10 +12,10 @@ local lp           = Players.LocalPlayer
 -- CONFIG
 -- ============================================================
 local Config = {
-    AutoDaily  = false,
-    AutoFarm   = false,
-    AutoPizza  = false,
-    AutoCollect= false,
+    AutoDaily   = false,
+    AutoFarm    = false,
+    AutoPizza   = false,
+    AutoCollect = false,
 }
 
 -- ============================================================
@@ -23,7 +23,6 @@ local Config = {
 -- ============================================================
 local API = RS:FindFirstChild("API")
 local NET = RS:FindFirstChild("adoptme_new_net")
-
 local Remotes = {}
 
 local function getRemote(parent, path)
@@ -36,21 +35,20 @@ local function getRemote(parent, path)
     return node
 end
 
-local function getNet(path)
-    -- path like "adoptme_new.modules.Dailies.DailiesNetService:9"
+-- Resolve paths like:
+-- adoptme_new.modules.Dailies.DailiesNetService:9
+local function tryFindNetRemote(path)
     if not NET then return nil end
     local node = NET
     for part in path:gmatch("[^%.]+") do
         if not node then return nil end
-        -- handle :N suffix (numbered children)
+
         local name, idx = part:match("^(.+):(%d+)$")
         if name and idx then
-            local parent = node:FindFirstChild(name)
-            if not parent then return nil end
-            -- numbered remote: GetChildren sorted
-            local children = parent:GetChildren()
-            table.sort(children, function(a,b) return a.Name < b.Name end)
-            -- DailiesNetService:9 means 9th line in file → just find by index in children
+            local folder = node:FindFirstChild(name)
+            if not folder then return nil end
+            local children = folder:GetChildren()
+            table.sort(children, function(a, b) return a.Name < b.Name end)
             node = children[tonumber(idx)]
         else
             node = node:FindFirstChild(part)
@@ -59,27 +57,49 @@ local function getNet(path)
     return node
 end
 
--- Cache all remotes
 pcall(function()
     if API then
-        Remotes.DataChanged        = API:WaitForChild("DataAPI/DataChanged", 10)
-        Remotes.PayCollect         = API:WaitForChild("PayAPI/Collect", 10)
-        Remotes.ClaimDailyReward   = API:WaitForChild("DailyLoginAPI/ClaimDailyReward", 10)
-        Remotes.ClaimStarReward    = API:WaitForChild("DailyLoginAPI/ClaimStarReward", 10)
-        Remotes.ProgressPetAilment = API:WaitForChild("AilmentsAPI/ProgressPetMeAilment", 10)
-        Remotes.PizzaClaim         = API:WaitForChild("RoleplayAPI/PizzaShopClaimDough", 10)
-        Remotes.PizzaNav           = API:WaitForChild("RoleplayAPI/NavigateToPizzaShopConveyor", 10)
-        Remotes.MinigameJoin       = API:WaitForChild("MinigameAPI/AttemptJoin", 10)
-        Remotes.MicrogameStart     = API:WaitForChild("MicrogameAPI/AttemptStart", 10)
-        Remotes.TeleToLocation     = API:WaitForChild("LocationAPI/TeleToLocation", 10)
+        Remotes.DataChanged         = getRemote(API, "DataAPI/DataChanged")
+        Remotes.DataInit            = getRemote(API, "DataAPI/ReplicateInitData")
+        Remotes.DataPartial         = getRemote(API, "DataAPI/DataPartiallyChanged")
+        Remotes.PayCollect          = getRemote(API, "PayAPI/Collect")
+        Remotes.ClaimDailyReward    = getRemote(API, "DailyLoginAPI/ClaimDailyReward")
+        Remotes.ClaimStarReward     = getRemote(API, "DailyLoginAPI/ClaimStarReward")
+        Remotes.ProgressPetAilment  = getRemote(API, "AilmentsAPI/ProgressPetMeAilment")
+        Remotes.PetAilmentCompleted = getRemote(API, "AilmentsAPI/PetAilmentCompleted")
+        Remotes.BabyAilmentCompleted= getRemote(API, "AilmentsAPI/BabyAilmentCompleted")
+        Remotes.ShowHealingEffect   = getRemote(API, "AilmentsAPI/ShowHealingEffect")
+        Remotes.PizzaClaim          = getRemote(API, "RoleplayAPI/PizzaShopClaimDough")
+        Remotes.PizzaNav            = getRemote(API, "RoleplayAPI/NavigateToPizzaShopConveyor")
+        Remotes.MinigameJoin        = getRemote(API, "MinigameAPI/AttemptJoin")
+        Remotes.MicrogameStart      = getRemote(API, "MicrogameAPI/AttemptStart")
+        Remotes.TeleToLocation      = getRemote(API, "LocationAPI/TeleToLocation")
+        Remotes.PetProgressed       = getRemote(API, "PetAPI/PetProgressed")
+        Remotes.PetHatched          = getRemote(API, "PetAPI/PetHatched")
     end
 end)
 
--- Dailies net remotes (numbered children)
+-- Tim remote theo dung ten (vd "DailiesNetService:9") trong toan bo descendants cua NET.
+-- An toan hon sort index vi khong phu thuoc cau truc folder.
+local function findNetRemoteByName(targetName)
+    if not NET then return nil end
+    if NET:FindFirstChild(targetName) then
+        return NET:FindFirstChild(targetName)
+    end
+    for _, inst in ipairs(NET:GetDescendants()) do
+        if inst.Name == targetName and (inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
+            return inst
+        end
+    end
+    return nil
+end
+
 pcall(function()
     if NET then
-        Remotes.DailiesEvent1 = NET:FindFirstChild("adoptme_new.modules.Dailies.DailiesNetService:9")
-        Remotes.DailiesEvent2 = NET:FindFirstChild("adoptme_new.modules.Dailies.DailiesNetService:15")
+        Remotes.DailiesEvent1 = findNetRemoteByName("DailiesNetService:9")
+            or tryFindNetRemote("adoptme_new.modules.Dailies.DailiesNetService:9")
+        Remotes.DailiesEvent2 = findNetRemoteByName("DailiesNetService:15")
+            or tryFindNetRemote("adoptme_new.modules.Dailies.DailiesNetService:15")
         print("[DEBUG] Found DailiesEvent1:", Remotes.DailiesEvent1 and Remotes.DailiesEvent1.Name)
         print("[DEBUG] Found DailiesEvent2:", Remotes.DailiesEvent2 and Remotes.DailiesEvent2.Name)
     end
@@ -97,7 +117,9 @@ local statusText = "idle"
 local function setStatus(text)
     statusText = text
     if statusLbl then
-        pcall(function() statusLbl.Text = "● " .. text end)
+        pcall(function()
+            statusLbl.Text = "[*] " .. text
+        end)
     end
 end
 
@@ -131,12 +153,148 @@ local function tryCall(remote, ...)
 end
 
 local function retryCall(remote, maxTry, ...)
-    for i = 1, maxTry do
+    for _ = 1, maxTry do
         local ok, res = tryCall(remote, ...)
         if ok then return true, res end
         task.wait(1)
     end
     return false
+end
+
+-- ============================================================
+-- AUTO QUEST QUEUE + DE-DUP
+-- ============================================================
+local activeTasks = {}
+local activeTaskMap = {}
+local completedTaskCache = {}
+
+local function simpleEncode(value, depth, seen)
+    depth = depth or 0
+    seen = seen or {}
+    local valueType = typeof(value)
+
+    if valueType == "string" then
+        return value:lower()
+    elseif valueType == "number" or valueType == "boolean" then
+        return tostring(value)
+    elseif valueType ~= "table" then
+        return tostring(value)
+    end
+
+    if seen[value] then
+        return "<cycle>"
+    end
+    if depth >= 3 then
+        return "<max-depth>"
+    end
+
+    seen[value] = true
+    local parts = {}
+    for k, v in pairs(value) do
+        parts[#parts + 1] = tostring(k):lower() .. "=" .. simpleEncode(v, depth + 1, seen)
+    end
+    table.sort(parts)
+    seen[value] = nil
+    return table.concat(parts, "|")
+end
+
+local function normalizeTaskData(taskData)
+    if type(taskData) ~= "table" then return nil end
+
+    local task = {}
+    task.raw = taskData
+    task.id = taskData.id or taskData.quest_id or taskData.daily_id or taskData.key
+    task.name = taskData.name or taskData.quest_name or taskData.title or taskData.slug
+    task.rawType = taskData.kind or taskData.type or taskData.quest_type or taskData.questType or taskData.category or taskData.task_type or taskData[1]
+    task.progress = tonumber(taskData.progress or taskData.current_progress or taskData.current or taskData.value or 0) or 0
+    task.goal = tonumber(taskData.goal or taskData.required or taskData.target or taskData.total or 1) or 1
+    task.completed = taskData.completed == true or taskData.claimed == true
+    task.location = taskData.location or taskData.destination or taskData.place or taskData.zone
+    task.description = taskData.description or taskData.desc
+    task.kind = taskData.kind
+    return task
+end
+
+local function classifyQuest(task)
+    if not task then return "unknown" end
+    if task.kind then return task.kind end
+
+    local blob = table.concat({
+        tostring(task.rawType or ""),
+        tostring(task.name or ""),
+        tostring(task.id or ""),
+        tostring(task.description or ""),
+        simpleEncode(task.raw),
+    }, " "):lower()
+
+    local kind = "unknown"
+    if blob:find("pizza") or blob:find("dough") or blob:find("delivery") or blob:find("pizza shop") then
+        kind = "pizza"
+    elseif blob:find("mini") or blob:find("microgame") or blob:find("obby") or blob:find("join game") then
+        kind = "minigame"
+    elseif blob:find("tele") or blob:find("location") or blob:find("school") or blob:find("hospital") or blob:find("neighborhood") then
+        kind = "teleport"
+    elseif blob:find("bucks") or blob:find("collect") or blob:find("reward") then
+        kind = "collect"
+    elseif blob:find("pet") or blob:find("ailment") or blob:find("sleep") or blob:find("dirty") or blob:find("hungry") or blob:find("sick") or blob:find("care") or blob:find("grow") or blob:find("level") then
+        kind = "pet"
+    end
+
+    task.kind = kind
+    return kind
+end
+
+local function getTaskKey(task)
+    local t = type(task) == "table" and (task.raw and task or normalizeTaskData(task)) or nil
+    if not t then return nil end
+    return table.concat({
+        tostring(t.id or ""),
+        tostring(t.name or ""),
+        tostring(t.rawType or ""),
+        tostring(classifyQuest(t) or "unknown"),
+    }, "|"):lower()
+end
+
+local function pushTask(taskData)
+    local task = taskData.raw and taskData or normalizeTaskData(taskData)
+    if not task or task.completed then return false end
+
+    local key = getTaskKey(task)
+    if not key or activeTaskMap[key] then
+        return false
+    end
+
+    activeTaskMap[key] = true
+    table.insert(activeTasks, task)
+    return true
+end
+
+local function popTask()
+    while #activeTasks > 0 do
+        local task = table.remove(activeTasks, 1)
+        local key = getTaskKey(task)
+        if key then
+            activeTaskMap[key] = nil
+        end
+        if task and not task.completed then
+            return task
+        end
+    end
+    return nil
+end
+
+local function markTaskDone(task)
+    local key = type(task) == "string" and task or getTaskKey(task)
+    if key then
+        completedTaskCache[key] = tick()
+    end
+end
+
+local function dedupeTask(task, window)
+    local key = type(task) == "string" and task or getTaskKey(task)
+    if not key then return false end
+    local ts = completedTaskCache[key]
+    return ts and tick() - ts <= (window or 60) or false
 end
 
 -- ============================================================
@@ -176,6 +334,14 @@ S.retryCall    = retryCall
 S.stopAll      = stopAll
 S.startFarm    = startFarm
 S.statusText   = "idle"
+S.activeTasks  = activeTasks
+S.normalizeTaskData = normalizeTaskData
+S.classifyQuest = classifyQuest
+S.getTaskKey   = getTaskKey
+S.pushTask     = pushTask
+S.popTask      = popTask
+S.markTaskDone = markTaskDone
+S.dedupeTask   = dedupeTask
 S._statusLblRef = function(lbl) statusLbl = lbl end
 
 return S
