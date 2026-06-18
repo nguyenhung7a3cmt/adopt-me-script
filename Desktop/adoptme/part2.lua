@@ -142,22 +142,34 @@ local function progressPetCare(taskInfo)
             local ailmentRemote = (Remotes.AilmentMap and Remotes.AilmentMap[ailment])
                 or Remotes.ProgressPetMeAilment
                 or Remotes.ProgressPetAilment
-            local ok, res = tryCall(ailmentRemote, S.lp, pet, ailment)
-            if not ok then
-                ok, res = tryCall(ailmentRemote, ailment)
+            -- Thu lan luot cac combo arg khac nhau
+            local ok, res
+            local combos = {
+                {ailment},
+                {pet, ailment},
+                {S.lp, ailment},
+                {S.lp, pet, ailment},
+                {ailment, pet},
+            }
+            for _, args in ipairs(combos) do
+                ok, res = tryCall(ailmentRemote, table.unpack(args))
+                if ok then break end
             end
             if ok then
                 anySuccess = true
+                setDebugStep("ailment_ok", ailment)
             else
-                setDebugError("Ailment[" .. ailment .. "] failed: " .. tostring(res))
+                setDebugError("Ailment[" .. ailment .. "] all combos failed: " .. tostring(res))
             end
             task.wait(jitter(0.35))
         end
 
         local petMeRemote = Remotes.ProgressPetMeAilment or Remotes.ProgressPetAilment
-        local ok2, res2 = tryCall(petMeRemote, S.lp, pet)
-        if not ok2 then
-            ok2, res2 = tryCall(petMeRemote, pet)
+        local ok2, res2
+        local petCombos = {{}, {pet}, {S.lp}, {S.lp, pet}, {pet, S.lp}}
+        for _, args in ipairs(petCombos) do
+            ok2, res2 = tryCall(petMeRemote, table.unpack(args))
+            if ok2 then break end
         end
         if ok2 then
             anySuccess = true
@@ -178,10 +190,19 @@ end
 local function runPizzaQuest()
     setDebugStep("pizza", "starting pizza quest")
     setStatus("quest: pizza")
-    tryCall(Remotes.PizzaNav)
+    -- PizzaNav: thu co va khong co arg
+    local navOk = tryCall(Remotes.PizzaNav)
+    if not navOk then tryCall(Remotes.PizzaNav, S.lp) end
     task.wait(jitter(2))
     for _ = 1, 6 do
-        tryCall(Remotes.PizzaClaim)
+        -- PizzaClaim: thu nhieu combo
+        local claimOk = tryCall(Remotes.PizzaClaim)
+        if not claimOk then claimOk = tryCall(Remotes.PizzaClaim, S.lp) end
+        if claimOk then
+            setDebugStep("pizza_claim", "success")
+        else
+            setDebugStep("pizza_claim", "failed")
+        end
         task.wait(jitter(1.25))
     end
     return true
@@ -436,8 +457,11 @@ local function runCollectLoop()
         while _G.AdoptHub do
             if Config.AutoCollect then
                 setStatus("collecting bucks...")
-                tryCall(Remotes.PayCollect)
-                safewait(jitter(60))
+                local ok = tryCall(Remotes.PayCollect)
+                if not ok then ok = tryCall(Remotes.PayCollect, S.lp) end
+                if not ok then ok = tryCall(Remotes.PayCollect, S.lp.Character) end
+                setDebugStep("collect", ok and "ok" or "failed")
+                safewait(jitter(30))
             else
                 task.wait(1)
             end
