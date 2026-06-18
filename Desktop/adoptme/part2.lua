@@ -15,11 +15,14 @@ local popTask          = S.popTask
 local markTaskDone     = S.markTaskDone
 local getTaskKey       = S.getTaskKey
 local dedupeTask       = S.dedupeTask
+local setDebugStep     = S.setDebugStep or function() end
+local setDebugError    = S.setDebugError or function() end
 
 -- ============================================================
 -- DAILY LOGIN CLAIM
 -- ============================================================
 local function claimDailyLogin()
+    setDebugStep("daily_login", "claiming rewards")
     setStatus("claiming daily login...")
     local ok1 = retryCall(Remotes.ClaimDailyReward, 3)
     task.wait(0.5)
@@ -46,23 +49,95 @@ local function hasRecentQuestSignal(name, window)
     return ts and (tick() - ts <= (window or 120)) or false
 end
 
+local PET_AILMENTS = {"hungry", "sleepy", "dirty", "sick", "thirsty", "bored", "walk", "toilet"}
+
+local function findActivePet()
+    setDebugStep("find_pet", "searching Workspace.Pets")
+    local pets = workspace:FindFirstChild("Pets")
+    if not pets then return nil end
+
+    local fallback = nil
+    for _, pet in ipairs(pets:GetChildren()) do
+        if pet:IsA("Model") then
+            fallback = fallback or pet
+            local owner = pet:FindFirstChild("Owner") or pet:FindFirstChild("owner")
+            if owner and owner.Value == S.lp then
+                return pet
+            end
+            local player = pet:GetAttribute("Owner") or pet:GetAttribute("owner") or pet:GetAttribute("Player")
+            if player == S.lp.Name or player == S.lp.UserId then
+                return pet
+            end
+        end
+    end
+    return fallback
+end
+
+local function sendPetReaction(pet, reactionName)
+    if not Remotes.ReplicateReactions or not pet then
+        setDebugStep("reaction", "missing remote or pet")
+        return
+    end
+    local payload = {}
+    payload[reactionName] = true
+    tryCall(Remotes.ReplicateReactions, pet, payload)
+end
+
+local function focusActivePet()
+    setDebugStep("focus_pet", "trying focus active pet")
+    local pet = findActivePet()
+    if pet then
+        setDebugStep("focus_pet", pet:GetFullName())
+        tryCall(Remotes.FocusPet, pet)
+        task.wait(0.15)
+    end
+    return pet
+end
+
 -- ============================================================
 -- QUEST ACTIONS
 -- ============================================================
 local function progressPetCare(taskInfo)
-    setStatus("quest: pet care")
-    local tries = 3
+    setDebugStep("pet_care", "starting care loop")
+    setStatus("pet care: working needs")
+    local pet = focusActivePet()
+    local tries = 4
     if taskInfo and taskInfo.progress and taskInfo.goal and taskInfo.goal > taskInfo.progress then
-        tries = math.clamp(taskInfo.goal - taskInfo.progress, 1, 6)
+        tries = math.clamp(taskInfo.goal - taskInfo.progress, 1, 8)
     end
-    for _ = 1, tries do
-        tryCall(Remotes.ProgressPetAilment)
-        task.wait(jitter(0.9))
+
+    for i = 1, tries do
+        if pet then
+            sendPetReaction(pet, "NavigateReaction")
+            tryCall(Remotes.ResetPetNetwork, pet)
+        end
+
+        for _, ailment in ipairs(PET_AILMENTS) do
+            if not _G.AdoptHub then break end
+            setDebugStep("pet_ailment", ailment)
+            setStatus("pet care: " .. ailment)
+            if pet then
+                local reaction = ailment:gsub("^%l", string.upper) .. "AilmentReaction"
+                sendPetReaction(pet, reaction)
+            end
+            local ok, res = tryCall(Remotes.ProgressPetAilment, ailment)
+            if not ok then
+                setDebugError("ProgressPetAilment failed: " .. tostring(res))
+            end
+            task.wait(jitter(0.35))
+        end
+
+        local ok2, res2 = tryCall(Remotes.ProgressPetAilment)
+        if not ok2 then
+            setDebugError("ProgressPetAilment(empty) failed: " .. tostring(res2))
+        end
+        task.wait(jitter(0.8))
     end
     return true
 end
 
 local function runPizzaQuest()
+    setDebugStep("pizza", "starting pizza quest")
     setStatus("quest: pizza")
     tryCall(Remotes.PizzaNav)
     task.wait(jitter(2))
@@ -74,6 +149,7 @@ local function runPizzaQuest()
 end
 
 local function runMinigameQuest()
+    setDebugStep("minigame", "starting minigame quest")
     setStatus("quest: minigame")
     tryCall(Remotes.MinigameJoin)
     task.wait(jitter(1))
@@ -82,12 +158,14 @@ local function runMinigameQuest()
 end
 
 local function runCollectQuest()
+    setDebugStep("collect", "collecting bucks")
     setStatus("quest: collect bucks")
     tryCall(Remotes.PayCollect)
     return true
 end
 
 local function runTeleportQuest(task)
+    setDebugStep("teleport", "teleporting")
     setStatus("quest: teleport")
     local target = task and (task.location or task.destination or task.place or task.zone)
     if target then
@@ -108,21 +186,31 @@ local questHandlers = {
 }
 
 local function handleTask(taskData)
+    setDebugStep("handle_task", tostring(type(taskData)))
     local task = normalizeTaskData(taskData)
-    if not task then return false end
+    if not task then
+        setDebugError("normalizeTaskData returned nil")
+        return false
+    end
 
     local key = getTaskKey(task)
     if key and dedupeTask(key, 2.5) then return false end
 
-    local kind = classifyQuest(task)
+    local kind = classifyQuest(task) or "unknown"
+    if (kind == "unknown" or not questHandlers[kind]) and Config.AutoFarm then
+        kind = "pet"
+    end
     local handler = questHandlers[kind]
     if not handler then
+        setDebugError("unknown quest: " .. tostring(task.rawType or task.name or task.id or kind))
         setStatus("quest unknown: " .. tostring(task.rawType or task.name or task.id or kind))
         return false
     end
 
+    setDebugStep("run_handler", kind)
     local ok = handler(task)
     if ok and key then
+        setDebugStep("task_done", key)
         markTaskDone(key)
     end
     return ok
@@ -131,6 +219,7 @@ end
 local function queueTaskList(list)
     if type(list) ~= "table" then return end
     for _, value in ipairs(list) do
+        setDebugStep("queue_task", tostring(type(value)))
         local task = normalizeTaskData(value)
         if task then
             pushTask(task)
@@ -149,8 +238,10 @@ local function inspectDailyPayload(...)
             if value.active then queueTaskList(value.active) end
             if value.daily_quests then queueTaskList(value.daily_quests) end
             if value.kind or value.type or value.quest_type or value.questType or value.id or value.name then
-                local task = normalizeTaskData(value)
+                setDebugStep("queue_task", tostring(type(value)))
+        local task = normalizeTaskData(value)
                 if task then
+                    setDebugStep("queue_push", tostring(task.rawType or task.name or task.id or "unknown"))
                     pushTask(task)
                 end
             end
@@ -224,6 +315,7 @@ local function hookDailies()
 
     if Remotes.PetAilmentCompleted then
         Remotes.PetAilmentCompleted.OnClientEvent:Connect(function(_, ailmentName)
+            setDebugStep("pet_complete", tostring(ailmentName))
             rememberQuestSignal(ailmentName)
             rememberQuestSignal("pet")
             rememberQuestSignal("ailment")
@@ -232,6 +324,7 @@ local function hookDailies()
 
     if Remotes.PetProgressed then
         Remotes.PetProgressed.OnClientEvent:Connect(function()
+            setDebugStep("pet_progressed", "event")
             rememberQuestSignal("pet_progressed")
             rememberQuestSignal("level_up")
         end)
@@ -266,13 +359,26 @@ end
 local function runDailyLoop()
     task.spawn(function()
         while _G.AdoptHub do
-            if Config.AutoDaily then
+            if Config.AutoDaily or Config.AutoFarm then
+                setDebugStep("loop", "pump fallback")
                 pumpFallbackQuests()
                 local taskData = popTask()
                 if taskData then
-                    handleTask(taskData)
+                    setDebugStep("loop_task", tostring(taskData.kind or taskData.rawType or taskData.name or "unknown"))
+                    local okHandle, errHandle = pcall(handleTask, taskData)
+                    if not okHandle then
+                        setDebugError("handleTask crash: " .. tostring(errHandle))
+                    end
                     task.wait(jitter(1))
+                elseif Config.AutoFarm then
+                    setDebugStep("loop_fallback", "auto_farm_pet_loop")
+                    local okFallback, errFallback = pcall(handleTask, {id = "auto_farm_pet_loop", kind = "pet", rawType = "pet_care", progress = 0, goal = 1})
+                    if not okFallback then
+                        setDebugError("auto_farm handleTask crash: " .. tostring(errFallback))
+                    end
+                    safewait(4)
                 else
+                    setDebugStep("waiting", "no queued task")
                     setStatus("auto quest: waiting")
                     safewait(5)
                 end
@@ -333,11 +439,8 @@ local function runPetCareLoop()
     task.spawn(function()
         while _G.AdoptHub do
             if Config.AutoFarm then
-                for _ = 1, 3 do
-                    tryCall(Remotes.ProgressPetAilment)
-                    task.wait(jitter(0.8))
-                end
-                safewait(jitter(20))
+                -- AutoFarm is handled by runDailyLoop so it can share quest queue/dedupe.
+                safewait(5)
             else
                 task.wait(1)
             end

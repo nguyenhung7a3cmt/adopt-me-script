@@ -7,6 +7,7 @@ local lp           = S.lp
 local Config       = S.Config
 local setStatus    = S.setStatus
 local claimDailyLogin = S.claimDailyLogin
+local getDebugState = S.getDebugState or function() return {step = "idle", detail = "", lastError = ""} end
 
 -- ============================================================
 -- COLORS
@@ -330,7 +331,30 @@ makeBtn(farmPage, "Stop All Farms", fy, function()
 end)
 fy = fy + 40
 
+local dbgBox = frame(farmPage, UDim2.new(1,-16,0,72), UDim2.new(0,8,0,fy), C.BG2, 0)
+corner(dbgBox, 8)
+stroke(dbgBox, C.BorderDim, 1, 0.5)
+
+local dbgLbl = label(dbgBox, "debug: idle", 11, C.TextMuted)
+dbgLbl.Position = UDim2.new(0,8,0,4)
+dbgLbl.Size = UDim2.new(1,-10,1,-8)
+dbgLbl.TextWrapped = true
+dbgLbl.TextYAlignment = Enum.TextYAlignment.Top
+
+fy = fy + 80
 farmPage.CanvasSize = UDim2.new(0,0,0,fy+8)
+
+-- live debug
+ task.spawn(function()
+    while _G.AdoptHub and dbgLbl and dbgLbl.Parent do
+        local st = getDebugState()
+        local line1 = "step: " .. tostring(st.step or "idle")
+        local line2 = "detail: " .. tostring(st.detail or "")
+        local line3 = "err: " .. tostring(st.lastError or "")
+        dbgLbl.Text = line1 .. "\n" .. line2 .. "\n" .. line3
+        task.wait(0.25)
+    end
+end)
 
 -- ============================================================
 -- TAB 2: DAILY

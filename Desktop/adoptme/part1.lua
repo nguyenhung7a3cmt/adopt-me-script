@@ -76,6 +76,11 @@ pcall(function()
         Remotes.TeleToLocation      = getRemote(API, "LocationAPI/TeleToLocation")
         Remotes.PetProgressed       = getRemote(API, "PetAPI/PetProgressed")
         Remotes.PetHatched          = getRemote(API, "PetAPI/PetHatched")
+        Remotes.FocusPet            = getRemote(API, "AdoptAPI/FocusPet")
+        Remotes.UnfocusPet          = getRemote(API, "AdoptAPI/UnfocusPet")
+        Remotes.ReplicateReactions  = getRemote(API, "PetAPI/ReplicateActiveReactions")
+        Remotes.ResetPetNetwork     = getRemote(API, "PetAPI/ResetNetworkOwnership")
+        Remotes.ClaimPetProgression = getRemote(API, "PetAPI/ClaimProgressionReward")
     end
 end)
 
@@ -168,6 +173,29 @@ local activeTasks = {}
 local activeTaskMap = {}
 local completedTaskCache = {}
 
+
+local debugState = {
+    step = "idle",
+    detail = "",
+    lastError = "",
+    updatedAt = 0,
+}
+
+local function setDebugStep(step, detail)
+    debugState.step = tostring(step or "idle")
+    debugState.detail = tostring(detail or "")
+    debugState.updatedAt = tick()
+end
+
+local function setDebugError(err)
+    debugState.lastError = tostring(err or "")
+    debugState.updatedAt = tick()
+end
+
+local function getDebugState()
+    return debugState
+end
+
 local function simpleEncode(value, depth, seen)
     depth = depth or 0
     seen = seen or {}
@@ -211,7 +239,9 @@ local function normalizeTaskData(taskData)
     task.completed = taskData.completed == true or taskData.claimed == true
     task.location = taskData.location or taskData.destination or taskData.place or taskData.zone
     task.description = taskData.description or taskData.desc
-    task.kind = taskData.kind
+    if type(taskData.kind) == "string" then
+        task.kind = taskData.kind
+    end
     return task
 end
 
@@ -245,7 +275,8 @@ local function classifyQuest(task)
 end
 
 local function getTaskKey(task)
-    local t = type(task) == "table" and (task.raw and task or normalizeTaskData(task)) or nil
+    if type(task) ~= "table" then return nil end
+    local t = task.raw and task or normalizeTaskData(task)
     if not t then return nil end
     return table.concat({
         tostring(t.id or ""),
@@ -256,6 +287,7 @@ local function getTaskKey(task)
 end
 
 local function pushTask(taskData)
+    if type(taskData) ~= "table" then return false end
     local task = taskData.raw and taskData or normalizeTaskData(taskData)
     if not task or task.completed then return false end
 
@@ -335,6 +367,10 @@ S.stopAll      = stopAll
 S.startFarm    = startFarm
 S.statusText   = "idle"
 S.activeTasks  = activeTasks
+S.debugState   = debugState
+S.setDebugStep = setDebugStep
+S.setDebugError = setDebugError
+S.getDebugState = getDebugState
 S.normalizeTaskData = normalizeTaskData
 S.classifyQuest = classifyQuest
 S.getTaskKey   = getTaskKey
