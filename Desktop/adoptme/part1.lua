@@ -51,6 +51,20 @@ local function getRemoteWait(parent, path, timeout)
     return node
 end
 
+-- Tim remote theo ten, uu tien _G.CachedRemotes (pre-cached truoc khi game filter)
+local function getRemoteByName(name)
+    if _G.CachedRemotes and _G.CachedRemotes[name] then
+        return _G.CachedRemotes[name]
+    end
+    local RS2 = game:GetService("ReplicatedStorage")
+    for _, obj in ipairs(RS2:GetDescendants()) do
+        if obj.Name == name and (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
+            return obj
+        end
+    end
+    return nil
+end
+
 -- Resolve paths like:
 -- adoptme_new.modules.Dailies.DailiesNetService:9
 local function tryFindNetRemote(path)
@@ -82,12 +96,12 @@ pcall(function()
         Remotes.ClaimDailyReward    = getRemote(API, "DailyLoginAPI/ClaimDailyReward")
         Remotes.ClaimStarReward     = getRemote(API, "DailyLoginAPI/ClaimStarReward")
         -- Ailment remotes (mỗi loại có remote riêng)
-        Remotes.ProgressPetMeAilment    = getRemoteWait(API, "AilmentsAPI/ProgressPetMeAilment")
-        Remotes.ProgressDirtyAilment    = getRemoteWait(API, "AilmentsAPI/ProgressDirtyAilment")
-        Remotes.ChooseMysteryAilment    = getRemoteWait(API, "AilmentsAPI/ChooseMysteryAilment")
-        Remotes.PetAilmentCompleted     = getRemoteWait(API, "AilmentsAPI/PetAilmentCompleted")
-        Remotes.BabyAilmentCompleted    = getRemoteWait(API, "AilmentsAPI/BabyAilmentCompleted")
-        Remotes.ShowHealingEffect       = getRemoteWait(API, "AilmentsAPI/ShowHealingEffect")
+        Remotes.ProgressPetMeAilment = getRemoteByName("ProgressPetMeAilment")
+        Remotes.ProgressDirtyAilment = getRemoteByName("ProgressDirtyAilment")
+        Remotes.ChooseMysteryAilment = getRemoteByName("ChooseMysteryAilment")
+        Remotes.PetAilmentCompleted = getRemoteByName("PetAilmentCompleted")
+        Remotes.BabyAilmentCompleted = getRemoteByName("BabyAilmentCompleted")
+        Remotes.ShowHealingEffect = getRemoteByName("ShowHealingEffect")
         -- Map ailment name -> remote (dùng trong part2)
         Remotes.AilmentMap = {
             hungry   = Remotes.ProgressPetMeAilment,
