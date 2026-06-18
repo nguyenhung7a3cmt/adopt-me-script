@@ -9,7 +9,11 @@ _G.CachedRemotes = {}
 pcall(function()
     for _, obj in ipairs(RS:GetDescendants()) do
         if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            _G.CachedRemotes[obj.Name] = obj
+            -- Key theo ten don gian
+            _G.CachedRemotes[obj.Name] = _G.CachedRemotes[obj.Name] or obj
+            -- Key theo full path (relative tu RS)
+            local full = obj:GetFullName():gsub("^ReplicatedStorage%.", "")
+            _G.CachedRemotes[full] = obj
         end
     end
     local n = 0

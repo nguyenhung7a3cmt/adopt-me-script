@@ -51,11 +51,26 @@ local function getRemoteWait(parent, path, timeout)
     return node
 end
 
--- Tim remote theo ten, uu tien _G.CachedRemotes (pre-cached truoc khi game filter)
+-- Tim remote theo ten, uu tien _G.CachedRemotes
 local function getRemoteByName(name)
-    if _G.CachedRemotes and _G.CachedRemotes[name] then
-        return _G.CachedRemotes[name]
+    if _G.CachedRemotes then
+        -- Thu full path truoc (chinh xac hon)
+        local fullKey = "API/AilmentsAPI/" .. name
+        if _G.CachedRemotes[fullKey] then
+            return _G.CachedRemotes[fullKey]
+        end
+        -- Thu ten don gian
+        if _G.CachedRemotes[name] then
+            return _G.CachedRemotes[name]
+        end
+        -- Scan cache tim bat ky key nao ket thuc bang ten
+        for key, obj in pairs(_G.CachedRemotes) do
+            if key:sub(-#name) == name then
+                return obj
+            end
+        end
     end
+    -- Fallback scan live
     local RS2 = game:GetService("ReplicatedStorage")
     for _, obj in ipairs(RS2:GetDescendants()) do
         if obj.Name == name and (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
