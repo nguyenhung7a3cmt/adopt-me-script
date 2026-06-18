@@ -148,26 +148,31 @@ local function progressPetCare(taskInfo)
                     anySuccess = true
                 end
             end
-            local ok, res = tryCall(Remotes.ProgressPetAilment, S.lp, pet, ailment)
+            -- Dùng remote đúng cho từng ailment
+            local ailmentRemote = (Remotes.AilmentMap and Remotes.AilmentMap[ailment])
+                or Remotes.ProgressPetMeAilment
+                or Remotes.ProgressPetAilment
+            local ok, res = tryCall(ailmentRemote, S.lp, pet, ailment)
             if not ok then
-                ok, res = tryCall(Remotes.ProgressPetAilment, ailment)
+                ok, res = tryCall(ailmentRemote, ailment)
             end
             if ok then
                 anySuccess = true
             else
-                setDebugError("ProgressPetAilment failed: " .. tostring(res))
+                setDebugError("Ailment[" .. ailment .. "] failed: " .. tostring(res))
             end
             task.wait(jitter(0.35))
         end
 
-        local ok2, res2 = tryCall(Remotes.ProgressPetAilment, S.lp, pet)
+        local petMeRemote = Remotes.ProgressPetMeAilment or Remotes.ProgressPetAilment
+        local ok2, res2 = tryCall(petMeRemote, S.lp, pet)
         if not ok2 then
-            ok2, res2 = tryCall(Remotes.ProgressPetAilment, pet)
+            ok2, res2 = tryCall(petMeRemote, pet)
         end
         if ok2 then
             anySuccess = true
         else
-            setDebugError("ProgressPetAilment(empty) failed: " .. tostring(res2))
+            setDebugError("ProgressPetMe(empty) failed: " .. tostring(res2))
         end
         task.wait(jitter(0.8))
     end

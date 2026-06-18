@@ -65,10 +65,27 @@ pcall(function()
         Remotes.PayCollect          = getRemote(API, "PayAPI/Collect")
         Remotes.ClaimDailyReward    = getRemote(API, "DailyLoginAPI/ClaimDailyReward")
         Remotes.ClaimStarReward     = getRemote(API, "DailyLoginAPI/ClaimStarReward")
-        Remotes.ProgressPetAilment  = getRemote(API, "AilmentsAPI/ProgressPetMeAilment")
-        Remotes.PetAilmentCompleted = getRemote(API, "AilmentsAPI/PetAilmentCompleted")
-        Remotes.BabyAilmentCompleted= getRemote(API, "AilmentsAPI/BabyAilmentCompleted")
-        Remotes.ShowHealingEffect   = getRemote(API, "AilmentsAPI/ShowHealingEffect")
+        -- Ailment remotes (mỗi loại có remote riêng)
+        Remotes.ProgressPetMeAilment    = getRemote(API, "AilmentsAPI/ProgressPetMeAilment")
+        Remotes.ProgressDirtyAilment    = getRemote(API, "AilmentsAPI/ProgressDirtyAilment")
+        Remotes.ChooseMysteryAilment    = getRemote(API, "AilmentsAPI/ChooseMysteryAilment")
+        Remotes.PetAilmentCompleted     = getRemote(API, "AilmentsAPI/PetAilmentCompleted")
+        Remotes.BabyAilmentCompleted    = getRemote(API, "AilmentsAPI/BabyAilmentCompleted")
+        Remotes.ShowHealingEffect       = getRemote(API, "AilmentsAPI/ShowHealingEffect")
+        -- Map ailment name -> remote (dùng trong part2)
+        Remotes.AilmentMap = {
+            hungry   = Remotes.ProgressPetMeAilment,
+            thirsty  = Remotes.ProgressPetMeAilment,
+            sleepy   = Remotes.ProgressPetMeAilment,
+            bored    = Remotes.ProgressPetMeAilment,
+            sick     = Remotes.ProgressPetMeAilment,
+            walk     = Remotes.ProgressPetMeAilment,
+            toilet   = Remotes.ProgressPetMeAilment,
+            dirty    = Remotes.ProgressDirtyAilment,
+            mystery  = Remotes.ChooseMysteryAilment,
+        }
+        -- Backward compat
+        Remotes.ProgressPetAilment = Remotes.ProgressPetMeAilment
         Remotes.PizzaClaim          = getRemote(API, "RoleplayAPI/PizzaShopClaimDough")
         Remotes.PizzaNav            = getRemote(API, "RoleplayAPI/NavigateToPizzaShopConveyor")
         Remotes.MinigameJoin        = getRemote(API, "MinigameAPI/AttemptJoin")
